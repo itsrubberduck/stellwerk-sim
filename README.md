@@ -1,76 +1,51 @@
-# Nuxt Minimal Starter
+# ICE · Stellwerk · Chaos
 
-Look at the [Nuxt documentation](https://nuxt.com/docs/getting-started/introduction) to learn more.
+Kooperatives Stellwerk-Spiel für ICE-Nerds. Ein großer Screen ist der Leitstand,
+alle Mitspieler:innen verbinden sich per Handy als Stellpult. Läuft komplett im
+lokalen WLAN — keine Cloud.
 
-## Setup
-
-Make sure to install dependencies:
+## Starten
 
 ```bash
-# npm
-npm install
-
-# pnpm
-pnpm install
-
-# yarn
 yarn install
-
-# bun
-bun install
+yarn dev --host
 ```
 
-## Development Server
+- **Großer Screen / Beamer:** `http://localhost:3000/` öffnen (oder die `Network:`-URL).
+- **Handys:** im selben WLAN den QR-Code auf dem Screen scannen (führt auf `/play`).
 
-Start the development server on `http://localhost:3000`:
+> Hinweis: Das `dev`-Script setzt `TMPDIR=$HOME/.tmp/`, um die Nuxt-4.4-Regression
+> mit langen macOS-`/var/folders`-Temp-Pfaden (`Failed to restrict vite-node
+> socket permissions`) zu umgehen.
 
-```bash
-# npm
-npm run dev
+## So wird gespielt
 
-# pnpm
-pnpm dev
+Ein Taktknoten mit vier Linien-Zuläufen (NW/SW/NE/SE) und vier Bahnsteiggleisen.
 
-# yarn
-yarn dev
+1. Am Screen **Schicht beginnen** drücken.
+2. Jede:r wählt am Handy eine:n oder mehrere **Sektoren** (= Linien). Bei 2
+   Spielern je zwei Linien, bei 4 je eine. **Solo-Notbetrieb** lässt eine Person
+   alles steuern.
+3. **Einfahrt:** ankommenden Zug am Handy auf ein freies Gleis stellen.
+4. **Halt:** Haltezeit am Bahnsteig abwarten (Anschlüsse 🔗 müssen sich treffen).
+5. **Ausfahrt:** Zug auf seine Ziellinie ausfahren lassen — oft die Linie einer
+   anderen Person → zurufen!
 
-# bun
-bun run dev
-```
+**Regeln & Risiko:** Blockprinzip (ein Block, ein Zug). Ein Bahnhofskopf (West/Ost)
+lässt nur einen Zug gleichzeitig durch. Auf eine belegte Ausfahrlinie kann nicht
+ausgefahren werden. Telegrafierte Störungen (Weichenstörung, Gleissperrung, Person
+im Gleis) → Kopf rechtzeitig freihalten, sonst **Zwangsbremsung**. Überlasteter
+Knoten = Betrieb eingestellt.
 
-## Production
+Wertung: Pünktlichkeitsquote, Anschlüsse, Punkte; Sprinter zählen ×3, Güter ×0,5.
 
-Build the application for production:
+## Architektur
 
-```bash
-# npm
-npm run build
+- **Nuxt 4 + Nitro-WebSocket** (`/_ws`), server-autoritative Simulation.
+- `server/utils/engine.ts` — die Spiel-Engine (Tick-Loop, Topologie, Scoring).
+- `server/utils/room.ts` — Raum/Peers + 10-Hz-Broadcast.
+- `app/pages/index.vue` — Leitstand-Screen, `app/components/Stelltisch.vue` — Canvas.
+- `app/pages/play.vue` — Handy-Stellpult.
+- `shared/game.ts` — geteilte Typen/Konstanten.
 
-# pnpm
-pnpm build
-
-# yarn
-yarn build
-
-# bun
-bun run build
-```
-
-Locally preview production build:
-
-```bash
-# npm
-npm run preview
-
-# pnpm
-pnpm preview
-
-# yarn
-yarn preview
-
-# bun
-bun run preview
-```
-
-Check out the [deployment documentation](https://nuxt.com/docs/getting-started/deployment) for more information.
-# stellwerk-sim
+Design-Dokument: `docs/plans/2026-06-07-ice-stellwerk-chaos-design.md`.
