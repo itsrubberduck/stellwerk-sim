@@ -176,8 +176,12 @@ export class GameEngine {
   setSolo(v: boolean) { this.soloMode = v }
 
   // ---------- commands ----------
+  private playing() {
+    return this.phase === 'RUHE' || this.phase === 'BERUFSVERKEHR' || this.phase === 'STOERUNGSBETRIEB'
+  }
+
   setEntry(trainId: string, platform: number): boolean {
-    if (this.globalStopLeft > 0) return false
+    if (!this.playing() || this.globalStopLeft > 0) return false
     const t = this.trains.find(x => x.id === trainId)
     if (!t || t.state !== 'APPROACH') return false
     const idx = platform - 1
@@ -196,7 +200,7 @@ export class GameEngine {
   }
 
   setExit(trainId: string): boolean {
-    if (this.globalStopLeft > 0) return false
+    if (!this.playing() || this.globalStopLeft > 0) return false
     const t = this.trains.find(x => x.id === trainId)
     if (!t || t.state !== 'READY_DEPART') return false
     const side = sideOf(t.exitLine)
