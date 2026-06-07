@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, ref } from 'vue'
+import { computed, ref, watch } from 'vue'
 import { useGame, sendMsg, setPlayerAvatar } from '../composables/useGame'
 import { AVATARS, PHASE_LABEL, TRAIN_KINDS, type AvatarId, type PlayerView, type TimetableEntry, type TrainView } from '../../shared/game'
 import { PLATFORM_CLASS_META, kindAllowed, type Side } from '../../shared/layout'
@@ -13,7 +13,7 @@ const sel = ref<{ id: string, x: number, y: number } | null>(null)
 const hoverId = ref<string | null>(null)
 
 const s = computed(() => snapshot.value)
-const net = computed(() => generateNetwork(s.value?.netCount ?? 2, (s.value?.netTypes as StationKind[] | undefined)))
+const net = computed(() => generateNetwork(s.value?.netCount ?? 2, (s.value?.netTypes as StationKind[] | undefined), s.value?.customStations ?? []))
 const me = computed(() => s.value?.players.find(p => p.id === playerId.value))
 const myStationId = computed(() => s.value?.soloMode ? (tab.value ?? net.value.stations[0]?.id ?? null) : (me.value?.station ?? null))
 const myStation = computed(() => net.value.stations.find(st => st.id === myStationId.value) ?? null)
@@ -29,7 +29,45 @@ const selectedAvatar = computed(() => chosenAvatar.value ?? me.value?.avatarId ?
 
 function chooseAvatar(avatarId: AvatarId) { chosenAvatar.value = avatarId; setPlayerAvatar(avatarId) }
 function claim(sid: string) { sendMsg({ t: 'claimStation', station: sid }) }
-function openPanel() { view.value = 'panel' }
+function openPanel() { view.value = 'panel'; initAudio() }
+
+// --- new-train chime ----------------------------------------------------
+// A short two-note tone whenever a train newly appears in the controller's
+// own station. AudioContext is created on a user gesture (opening the panel).
+let audioCtx: AudioContext | null = null
+function initAudio() {
+  if (audioCtx) { if (audioCtx.state === 'suspended') audioCtx.resume(); return }
+  const AC = window.AudioContext || (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext
+  if (AC) audioCtx = new AC()
+}
+function playArrivalChime() {
+  if (!audioCtx) return
+  const ctx = audioCtx; const now = ctx.currentTime
+  for (const [i, freq] of [660, 990].entries()) {
+    const osc = ctx.createOscillator(); const gain = ctx.createGain()
+    osc.type = 'sine'; osc.frequency.value = freq
+    osc.connect(gain); gain.connect(ctx.destination)
+    const t0 = now + i * 0.11
+    gain.gain.setValueAtTime(0.0001, t0)
+    gain.gain.exponentialRampToValueAtTime(0.16, t0 + 0.02)
+    gain.gain.exponentialRampToValueAtTime(0.0001, t0 + 0.17)
+    osc.start(t0); osc.stop(t0 + 0.2)
+  }
+}
+const seenTrains = new Set<string>()
+let chimeStation: string | null = null
+watch([myTrains, myStationId], ([list, stationId]) => {
+  // Re-seed silently when the viewed station changes (solo tab switch) or on first run.
+  if (stationId !== chimeStation) {
+    seenTrains.clear()
+    for (const t of list) seenTrains.add(t.id)
+    chimeStation = stationId
+    return
+  }
+  let arrived = false
+  for (const t of list) if (!seenTrains.has(t.id)) { seenTrains.add(t.id); arrived = true }
+  if (arrived && view.value === 'panel') playArrivalChime()
+}, { immediate: true })
 
 const fSide = (t: TrainView): Side => t.dir === 'E' ? 'E' : 'W'
 const selTrain = computed<TrainView | null>(() => sel.value ? (myTrains.value.find(t => t.id === sel.value!.id) ?? null) : null)

@@ -7,6 +7,7 @@
 import { AVATARS, TRAIN_KINDS, avatarProfile, type AvatarId, type GameSnapshot, type Phase, type TimetableEntry, type TrainKind, type TrainState } from '../../shared/game'
 import { kindAllowed, routesConflict, type Layout, type RouteDef, type Side } from '../../shared/layout'
 import { defaultTypes, generateNetwork, type LinkDef, type NetworkDef, type SideRole, type StationDef, type StationKind } from '../../shared/network'
+import type { CustomStationSpec } from '../../shared/layout'
 
 const ENTER_TIME = 4.0
 const EXIT_TIME = 3.6
@@ -92,6 +93,7 @@ const flipLine = (id: string) => (sideOf(id) === 'W' ? 'E' : 'W') + lineNum(id)
 export class GameEngine {
   netCount = 2
   netTypes: StationKind[] = []
+  customStations: CustomStationSpec[] = []
   net!: NetworkDef
   stations = new Map<string, Station>()
   links = new Map<string, LinkState>()
@@ -123,7 +125,7 @@ export class GameEngine {
 
   private buildNet(count: number, types: StationKind[]) {
     this.netCount = count
-    this.net = generateNetwork(count, types)
+    this.net = generateNetwork(count, types, this.customStations)
     this.netTypes = this.net.stations.map(s => s.kind) // normalized (KOPF only at ends)
     this.stations = new Map(this.net.stations.map(s => [s.id, new Station(s)]))
     this.links = new Map(this.net.links.map(l => [l.id, { def: l, occupant: Array(l.tracks).fill(null) }]))
@@ -144,6 +146,19 @@ export class GameEngine {
     if (index < 0 || index >= this.netCount) return
     const types = [...this.netTypes]; types[index] = kind as StationKind
     this.buildNet(this.netCount, types)
+  }
+  registerCustom(spec: CustomStationSpec) {
+    if (this.phase !== 'LOBBY' && this.phase !== 'GAMEOVER') return
+    if (!spec?.id || !spec.id.startsWith('custom:')) return
+    const i = this.customStations.findIndex(s => s.id === spec.id)
+    if (i >= 0) this.customStations[i] = spec; else this.customStations.push(spec)
+    this.buildNet(this.netCount, this.netTypes) // refresh any slot already using this spec
+  }
+  deleteCustom(specId: string) {
+    if (this.phase !== 'LOBBY' && this.phase !== 'GAMEOVER') return
+    this.customStations = this.customStations.filter(s => s.id !== specId)
+    // any slot still referencing it falls back to KNOTEN inside generateNetwork
+    this.buildNet(this.netCount, this.netTypes)
   }
   start() { if (this.phase !== 'LOBBY' && this.phase !== 'GAMEOVER') return; this.reset(false); this.phase = 'RUHE'; this.nextSpawnIn = 4; this.refillPreview() }
   restart() { this.reset(true) }
@@ -627,6 +642,7 @@ export class GameEngine {
     return {
       netCount: this.netCount,
       netTypes: [...this.netTypes],
+      customStations: this.customStations.map(s => ({ ...s })),
       phase: this.phase,
       elapsed: Math.floor(this.elapsed),
       stations: this.net.stations.map(sd => { const s = this.stations.get(sd.id)!; return { id: sd.id, platforms: [...s.platforms], platformDisabled: [...s.platformDisabled], sidings: [...s.sidings], sideDisabled: { W: s.sideDisabled.W, E: s.sideDisabled.E } } }),

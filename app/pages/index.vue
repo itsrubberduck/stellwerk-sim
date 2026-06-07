@@ -20,12 +20,17 @@ watch(() => snapshot.value?.roomCode, async (code) => {
 
 const s = computed(() => snapshot.value)
 const phase = computed(() => s.value?.phase ?? 'LOBBY')
-const net = computed(() => generateNetwork(s.value?.netCount ?? 2, (s.value?.netTypes as StationKind[] | undefined)))
+const customStations = computed(() => s.value?.customStations ?? [])
+const net = computed(() => generateNetwork(s.value?.netCount ?? 2, (s.value?.netTypes as StationKind[] | undefined), customStations.value))
 const stations = computed(() => net.value.stations)
+const customKinds = computed<StationKind[]>(() => customStations.value.map(c => c.id))
 const kindsFor = (i: number): StationKind[] => {
   const isEnd = i === 0 || i === (s.value?.netCount ?? 2) - 1
-  return isEnd && (s.value?.netCount ?? 2) > 1 ? [...THROUGH_KINDS, 'KOPF'] : THROUGH_KINDS
+  const base = [...THROUGH_KINDS, ...customKinds.value]
+  return isEnd && (s.value?.netCount ?? 2) > 1 ? [...base, 'KOPF'] : base
 }
+const kindLabel = (kind: string): string =>
+  customStations.value.find(c => c.id === kind)?.name ?? CORRIDOR_KIND_LABEL[kind] ?? kind
 function setType(i: number, kind: StationKind) { sendMsg({ t: 'setStationType', index: i, kind }) }
 const fmtTime = (sec: number) => `${Math.floor(sec / 60)}:${String(sec % 60).padStart(2, '0')}`
 const ownerOf = (sid: string) => s.value?.players.find(p => p.station === sid)
@@ -77,11 +82,14 @@ function openRoom() { setGameRoom(roomInput.value) }
       </div>
 
       <div class="lobby-right">
-        <div class="muted small label">Stellwerke &amp; Besetzung</div>
+        <div class="rh-head">
+          <div class="muted small label">Stellwerke &amp; Besetzung</div>
+          <NuxtLink to="/editor" class="key chip editor-link">✎ Bahnhof-Editor</NuxtLink>
+        </div>
         <div class="st-list">
           <div v-for="(st, i) in stations" :key="st.id" class="st-row" :class="{ taken: !!ownerOf(st.id) }" :style="ownerStyle(st.id)">
             <div class="st-top">
-              <div><div class="st-name">{{ st.name }}</div><div class="muted small">{{ CORRIDOR_KIND_LABEL[st.kind] }}</div></div>
+              <div><div class="st-name">{{ st.name }}</div><div class="muted small">{{ kindLabel(st.kind) }}</div></div>
               <div v-if="ownerOf(st.id)" class="owner-badge">
                 <PlayerAvatar :avatar-id="ownerOf(st.id)!.avatarId" :size="58" />
                 <b>{{ ownerOf(st.id)!.name }}</b>
@@ -89,7 +97,7 @@ function openRoom() { setGameRoom(roomInput.value) }
               <div v-else class="st-owner">frei</div>
             </div>
             <div class="type-chips">
-              <button v-for="k in kindsFor(i)" :key="k" class="key chip" :class="{ on: st.kind === k }" @click="setType(i, k)">{{ CORRIDOR_KIND_LABEL[k] }}</button>
+              <button v-for="k in kindsFor(i)" :key="k" class="key chip" :class="{ on: st.kind === k, custom: String(k).startsWith('custom:') }" @click="setType(i, k)">{{ kindLabel(k) }}</button>
             </div>
           </div>
         </div>
@@ -124,7 +132,7 @@ function openRoom() { setGameRoom(roomInput.value) }
         <template v-for="(st, i) in stations" :key="st.id">
           <div class="st-panel" :class="{ owned: !!ownerOf(st.id) }" :style="ownerStyle(st.id)">
             <div class="st-head">
-              <div><b>{{ st.name }}</b><span class="muted">{{ CORRIDOR_KIND_LABEL[st.kind] }}</span></div>
+              <div><b>{{ st.name }}</b><span class="muted">{{ kindLabel(st.kind) }}</span></div>
               <div v-if="ownerOf(st.id)" class="panel-owner">
                 <PlayerAvatar :avatar-id="ownerOf(st.id)!.avatarId" :size="38" />
                 <b>{{ ownerOf(st.id)!.name }}</b>
@@ -181,8 +189,13 @@ function openRoom() { setGameRoom(roomInput.value) }
 .st-owner { color: var(--accent); font-weight: 700; font-size: 13px; }
 .owner-badge { display: flex; align-items: center; gap: 8px; color: var(--owner-color); font-size: 16px; }
 .type-chips { display: flex; gap: 6px; margin-top: 8px; flex-wrap: wrap; }
-.chip { padding: 7px 10px; font-size: 12px; text-transform: none; letter-spacing: 0; }
+.chip { padding: 7px 10px; font-size: 12px; text-transform: none; letter-spacing: 0; text-decoration: none; }
 .chip.on { border-color: var(--accent); background: #2a2410; color: var(--accent); }
+.chip.custom { border-color: #2f7d4a; color: #9ff0bd; }
+.chip.custom.on { border-color: #48d17a; background: #14361f; color: #9ff0bd; }
+.rh-head { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+.editor-link { border-color: #2f7d4a; color: #9ff0bd; }
+.editor-link:hover { border-color: #48d17a; }
 
 .game { flex: 1; display: flex; flex-direction: column; min-height: 0; position: relative; }
 .hud { display: flex; align-items: center; gap: 22px; padding: 10px 22px; background: var(--panel); border-bottom: 2px solid var(--grid); flex-wrap: wrap; }

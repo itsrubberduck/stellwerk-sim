@@ -146,6 +146,12 @@ class Room {
       case 'setStationType':
         e.setStationType(msg.index, msg.kind)
         break
+      case 'registerCustom':
+        e.registerCustom(msg.spec)
+        break
+      case 'deleteCustom':
+        e.deleteCustom(msg.specId)
+        break
     }
     this.sendSnapshot(peer)
   }

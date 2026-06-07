@@ -431,3 +431,65 @@ export function buildThrough(name: string, w: number, e: number, p: number, wind
   const reach = (l: LineDef, pf: PlatformDef) => { const n = l.side === 'W' ? w : e; return Math.abs(norm(n, l.index) - norm(p, pf.index - 1)) <= window }
   return finish('KNOTEN', name, 'THROUGH', ['W', 'E'], lines, platforms, reach)
 }
+
+// ---- custom (user-designed) stations -----------------------------------
+// A custom station is fully described by a serializable spec so the screen,
+// the server and every phone build the identical layout. Lines are fixed at
+// 4 per side (W1–W4 / E1–E4) to match the 4-track hand-over links, which makes
+// a custom station placeable in any corridor slot (middle, end or single).
+export const CUSTOM_W_LINES = 4
+export const CUSTOM_E_LINES = 4
+export const CUSTOM_VW = VW
+export const CUSTOM_VH = VH
+export const CUSTOM_PLAT_X = { min: 120, max: VW - 120 }
+export const CUSTOM_PLAT_Y = { min: PLAT_TOP, max: 730 }
+export const CUSTOM_LINE_Y = { min: 40, max: VH - 40 }
+
+export interface CustomLine { id: string, side: Side, y: number, edgeY: number }
+export interface CustomPlatform { y: number, leftX: number, rightX: number, cls: PlatformClass }
+export interface CustomStationSpec {
+  id: string                 // "custom:<slug>" — used as the station kind
+  name: string
+  lines: CustomLine[]        // exactly 4 W + 4 E
+  platforms: CustomPlatform[]
+  reach: string[]            // connections as "<lineId>:<platformIndex>", e.g. "W1:3"
+}
+
+export function defaultCustomLines(): CustomLine[] {
+  const lines: CustomLine[] = []
+  for (let i = 0; i < CUSTOM_W_LINES; i++) { const y = spread(CUSTOM_W_LINES, LINE_TOP, LINE_BOT, i); lines.push({ id: `W${i + 1}`, side: 'W', y, edgeY: y }) }
+  for (let j = 0; j < CUSTOM_E_LINES; j++) { const y = spread(CUSTOM_E_LINES, LINE_TOP, LINE_BOT, j); lines.push({ id: `E${j + 1}`, side: 'E', y, edgeY: y }) }
+  return lines
+}
+
+export function buildCustomStation(spec: CustomStationSpec): Layout {
+  const lines: LineDef[] = spec.lines.map((l, i) => mkLine(l.id, l.side, l.id, i, l.y, l.edgeY))
+  const platforms: PlatformDef[] = spec.platforms.map((p, k) => ({
+    index: k + 1, y: p.y, leftX: p.leftX, rightX: p.rightX,
+    centerX: (p.leftX + p.rightX) / 2, cls: p.cls, openL: true, openR: true
+  }))
+  const reachSet = new Set(spec.reach)
+  const reach = (l: LineDef, pf: PlatformDef) => reachSet.has(`${l.id}:${pf.index}`)
+  return finish('KNOTEN', spec.name, 'THROUGH', ['W', 'E'], lines, platforms, reach, corridorSidings())
+}
+
+export interface CustomValidation { ok: boolean, errors: string[], warnings: string[] }
+// A station works in the corridor only if at least one platform can be both
+// entered from one side and left toward the other (a through route). Platforms
+// wired on a single side are dead ends for through traffic — warn, don't block.
+export function validateCustomSpec(spec: CustomStationSpec): CustomValidation {
+  const errors: string[] = [], warnings: string[] = []
+  if (!spec.name.trim()) errors.push('Name fehlt')
+  if (spec.platforms.length === 0) errors.push('Mindestens 1 Bahnsteig nötig')
+  const reachSet = new Set(spec.reach)
+  const sideReaches = (k: number, side: Side) => spec.lines.some(l => l.side === side && reachSet.has(`${l.id}:${k + 1}`))
+  let anyThrough = false
+  spec.platforms.forEach((_, k) => {
+    const w = sideReaches(k, 'W'), e = sideReaches(k, 'E')
+    if (w && e) anyThrough = true
+    else if (!w && !e) warnings.push(`Bahnsteig ${k + 1}: keine Verbindung`)
+    else warnings.push(`Bahnsteig ${k + 1}: nur ${w ? 'West' : 'Ost'} angebunden (Sackgasse)`)
+  })
+  if (spec.platforms.length > 0 && !anyThrough) errors.push('Keine durchgehende Route (kein Bahnsteig mit West- UND Ost-Anbindung)')
+  return { ok: errors.length === 0, errors, warnings }
+}

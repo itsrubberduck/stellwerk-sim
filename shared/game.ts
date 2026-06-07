@@ -1,5 +1,8 @@
 // Shared types & messages for the ICE-Stellwerk corridor (multi-station network).
 
+import type { CustomStationSpec } from './layout'
+export type { CustomStationSpec } from './layout'
+
 export type TrainKind =
   | 'SPRINTER' | 'ICE' | 'IC' | 'FREIGHT'
   | 'TGV' | 'CD' | 'SBAHN' | 'V60' | 'V100'
@@ -93,6 +96,7 @@ export interface TimetableEntry {
 export interface GameSnapshot {
   netCount: number
   netTypes: string[]
+  customStations: CustomStationSpec[]
   phase: Phase
   elapsed: number
   stations: StationView[]
@@ -132,6 +136,8 @@ export type ClientMessage =
   | { t: 'setNetwork', count: number }
   | { t: 'setStationType', index: number, kind: string }
   | { t: 'sendBack', trainId: string }
+  | { t: 'registerCustom', spec: CustomStationSpec }
+  | { t: 'deleteCustom', specId: string }
 
 // ---- Server -> Client ----
 export type ServerMessage =
