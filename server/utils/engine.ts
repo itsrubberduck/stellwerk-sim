@@ -74,8 +74,8 @@ function rnd<T>(arr: T[]): T { return arr[Math.floor(Math.random() * arr.length)
 function jitter(base: number, frac = 0.2) { return base * (1 + (Math.random() * 2 - 1) * frac) }
 
 export class GameEngine {
-  preset: Preset = 'MITTEL'
-  layout: Layout = generateLayout('MITTEL')
+  preset: Preset = 'KNOTEN'
+  layout: Layout = generateLayout('KNOTEN')
   phase: Phase = 'LOBBY'
   elapsed = 0
   roomCode = Math.random().toString(36).slice(2, 6).toUpperCase()
@@ -113,14 +113,22 @@ export class GameEngine {
 
   // ---------- lifecycle ----------
   setPreset(p: Preset) {
-    if (this.phase !== 'LOBBY' && this.phase !== 'GAMEOVER') return
     if (!PRESETS[p]) return
+    const wasPlaying = this.playing()
     this.preset = p
     this.layout = generateLayout(p)
     this.applyLayout()
     const valid = new Set(this.layout.lines.map(l => l.id))
     for (const pl of this.players.values()) pl.sectors = pl.sectors.filter(s => valid.has(s))
-    this.phase = 'LOBBY'
+    if (wasPlaying) {
+      // live switch: clear the board, keep score / clock / phase
+      this.trains = []; this.pending = []; this.preview = []; this.disturbances = []
+      this.sideDisabled = { W: false, E: false }; this.globalStopLeft = 0; this.resvSeq = 0
+      this.refillPreview(); this.nextSpawnIn = 3
+      this.pushToast('info', `Stellwerk gewechselt: ${this.layout.name}`)
+    } else {
+      this.phase = 'LOBBY'
+    }
   }
   start() {
     if (this.phase !== 'LOBBY' && this.phase !== 'GAMEOVER') return
@@ -179,6 +187,8 @@ export class GameEngine {
     if (!t || t.state !== 'APPROACH') return false
     if (platform < 1 || platform > this.platforms.length) return false
     if (!kindAllowed(t.kind, this.platformCls(platform))) return false
+    if (!this.layout.entry(t.entryLine, platform)) return false // not reachable from entry line
+    if (!this.layout.exit(t.exitLine, platform)) return false // could not leave toward destination
     t.resv = { kind: 'entry', platform, order: ++this.resvSeq }
     return true
   }
@@ -260,15 +270,22 @@ export class GameEngine {
   private genSpec(): Spec {
     const r = Math.random()
     const kind: TrainKind = r < 0.16 ? 'SPRINTER' : r < 0.58 ? 'ICE' : r < 0.82 ? 'IC' : 'FREIGHT'
-    const entry = rnd(this.layout.lines)
-    let exit: LineDef
-    const opp = this.layout.lines.filter(l => l.side !== entry.side)
-    const same = this.layout.lines.filter(l => l.side === entry.side && l.id !== entry.id)
-    if (opp.length && (Math.random() < 0.72 || !same.length)) exit = rnd(opp)
-    else exit = same.length ? rnd(same) : entry
-    const allowed = this.layout.platforms.filter(p => kindAllowed(kind, p.cls))
-    const sollPlatform = (allowed.length ? rnd(allowed) : this.layout.platforms[0]!).index
-    return { number: this.genNumber(kind), kind, entryLine: entry.id, exitLine: exit.id, sollPlatform }
+    for (let attempt = 0; attempt < 50; attempt++) {
+      const entry = rnd(this.layout.lines)
+      const ps = this.layout.platforms.filter(p => this.layout.entry(entry.id, p.index) && kindAllowed(kind, p.cls))
+      if (!ps.length) continue
+      const soll = rnd(ps)
+      const exits = this.layout.lines.filter(l => l.id !== entry.id && this.layout.exit(l.id, soll.index))
+      if (!exits.length) continue
+      const opp = exits.filter(l => l.side !== entry.side)
+      const exit = (opp.length && Math.random() < 0.72) ? rnd(opp) : rnd(exits)
+      return { number: this.genNumber(kind), kind, entryLine: entry.id, exitLine: exit.id, sollPlatform: soll.index }
+    }
+    // fallback (always routable)
+    const entry = this.layout.lines[0]!
+    const p = this.layout.platforms.find(pf => this.layout.entry(entry.id, pf.index)) ?? this.layout.platforms[0]!
+    const exitL = this.layout.lines.find(l => l.id !== entry.id && this.layout.exit(l.id, p.index)) ?? entry
+    return { number: this.genNumber(kind), kind, entryLine: entry.id, exitLine: exitL.id, sollPlatform: p.index }
   }
   private genNumber(kind: TrainKind): string {
     if (kind === 'SPRINTER') return `ICE ${1000 + Math.floor(Math.random() * 99)}`

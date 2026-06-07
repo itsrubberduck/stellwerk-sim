@@ -1,10 +1,12 @@
-// Parametric track-layout generator. Deterministic from a preset, so server
+// Parametric track-layout generator. Deterministic from a station id, so server
 // (conflict logic) and client (rendering) build the identical layout without
-// serializing geometry. Conflicts are decided by whether route "throat"
-// diagonals geometrically cross — i.e. crossing Fahrstraßen lock each other,
-// parallel ones run simultaneously (echtes weichengenaues Routing).
+// serializing geometry. Different station TYPES (through / terminus / junction)
+// give genuinely different topology & flow. Conflicts: two route throat-
+// diagonals on the same Bahnhofskopf that geometrically cross lock each other;
+// non-crossing routes run in parallel.
 
-export type Preset = 'KLEIN' | 'MITTEL' | 'GROSS'
+export type Preset = 'LANDHALT' | 'KNOTEN' | 'HBF' | 'KOPF' | 'ABZWEIG'
+export type StationType = 'THROUGH' | 'TERMINUS' | 'JUNCTION'
 export type Side = 'W' | 'E'
 export type PlatformClass = 'LANG' | 'KURZ' | 'GUETER'
 
@@ -14,7 +16,6 @@ export const PLATFORM_CLASS_META: Record<PlatformClass, { tag: string, label: st
   GUETER: { tag: 'G', label: 'Güter-/Durchfahrt', color: '#9aa3ad' }
 }
 
-// which train kinds may use which platform class
 export function kindAllowed(kind: string, cls: PlatformClass): boolean {
   if (kind === 'SPRINTER' || kind === 'ICE') return cls === 'LANG'
   if (kind === 'IC') return true
@@ -25,24 +26,27 @@ export function kindAllowed(kind: string, cls: PlatformClass): boolean {
 export interface Pt { x: number, y: number }
 
 export interface LineDef {
-  id: string // 'W1', 'E2'
+  id: string
   side: Side
-  label: string // 'West 1'
+  label: string
   index: number
   y: number
   edgeX: number
-  stubX: number // inner end of the line stub, where the throat begins
-  arrY: number // arrival track y
-  depY: number // departure track y
+  edgeY: number
+  stubX: number
+  arrY: number
+  depY: number
 }
 
 export interface PlatformDef {
-  index: number // 1-based
+  index: number
   y: number
   leftX: number
   rightX: number
   centerX: number
   cls: PlatformClass
+  openL: boolean
+  openR: boolean
 }
 
 export interface RouteDef {
@@ -51,13 +55,15 @@ export interface RouteDef {
   lineId: string
   side: Side
   platform: number
-  poly: Pt[] // full polyline for render + animation
-  diag: [Pt, Pt] // throat diagonal used for crossing-conflict
+  poly: Pt[]
+  diag: [Pt, Pt]
 }
 
 export interface Layout {
   preset: Preset
   name: string
+  type: StationType
+  sides: Side[]
   vw: number
   vh: number
   lines: LineDef[]
@@ -68,105 +74,113 @@ export interface Layout {
   byId: (id: string) => RouteDef | undefined
 }
 
-export const PRESETS: Record<Preset, { w: number, e: number, p: number, name: string, classes: PlatformClass[] }> = {
-  KLEIN: { w: 1, e: 1, p: 3, name: 'Haltepunkt (klein)', classes: ['LANG', 'LANG', 'GUETER'] },
-  MITTEL: { w: 2, e: 2, p: 5, name: 'Knoten (mittel)', classes: ['LANG', 'LANG', 'LANG', 'KURZ', 'GUETER'] },
-  GROSS: { w: 3, e: 3, p: 7, name: 'Hauptbahnhof (groß)', classes: ['LANG', 'LANG', 'LANG', 'LANG', 'KURZ', 'KURZ', 'GUETER'] }
+interface StationCfg { name: string, type: StationType, w: number, e: number, p: number, window: number, classes: PlatformClass[] }
+export const PRESETS: Record<Preset, StationCfg> = {
+  LANDHALT: { name: 'Landhalt', type: 'THROUGH', w: 1, e: 1, p: 3, window: 2, classes: ['LANG', 'LANG', 'GUETER'] },
+  KNOTEN: { name: 'Knoten', type: 'THROUGH', w: 2, e: 2, p: 5, window: 0.62, classes: ['LANG', 'LANG', 'LANG', 'KURZ', 'GUETER'] },
+  HBF: { name: 'Hauptbahnhof', type: 'THROUGH', w: 3, e: 3, p: 7, window: 0.55, classes: ['LANG', 'LANG', 'LANG', 'LANG', 'KURZ', 'KURZ', 'GUETER'] },
+  KOPF: { name: 'Kopfbahnhof', type: 'TERMINUS', w: 4, e: 0, p: 6, window: 0.6, classes: ['LANG', 'LANG', 'LANG', 'KURZ', 'KURZ', 'GUETER'] },
+  ABZWEIG: { name: 'Abzweig-Bf', type: 'JUNCTION', w: 2, e: 2, p: 5, window: 0.8, classes: ['LANG', 'LANG', 'LANG', 'KURZ', 'GUETER'] }
 }
 
-const VW = 1600
-const VH = 820
-const XPL = 560 // platform left x
-const XPR = 1040 // platform right x
-const W_EDGE = 60, W_STUB = 360
-const E_EDGE = 1540, E_STUB = 1240
-const PLAT_TOP = 130, PLAT_BOT = 690
-const LINE_TOP = 175, LINE_BOT = 645
-const TRACK_GAP = 9 // half-distance between arrival/departure track
+const VW = 1600, VH = 860
+const PLAT_TOP = 150, PLAT_BOT = 710
+const LINE_TOP = 180, LINE_BOT = 680
+const GAP = 9
+const PL = 580, PR = 1020, CENTER = (PL + PR) / 2
+const W_EDGE = 60, W_STUB = 372
+const E_EDGE = 1540, E_STUB = 1228
 
-function spread(n: number, lo: number, hi: number, i: number): number {
-  if (n <= 1) return (lo + hi) / 2
-  return lo + (i * (hi - lo)) / (n - 1)
+function spread(n: number, lo: number, hi: number, i: number): number { return n <= 1 ? (lo + hi) / 2 : lo + (i * (hi - lo)) / (n - 1) }
+function norm(n: number, i: number): number { return n <= 1 ? 0.5 : i / (n - 1) }
+
+function ccw(a: Pt, b: Pt, c: Pt): number { return Math.sign((c.y - a.y) * (b.x - a.x) - (b.y - a.y) * (c.x - a.x)) }
+export function segCross(p1: Pt, p2: Pt, p3: Pt, p4: Pt): boolean {
+  return ccw(p1, p2, p3) !== ccw(p1, p2, p4) && ccw(p3, p4, p1) !== ccw(p3, p4, p2)
+}
+export function routesConflict(a: RouteDef, b: RouteDef): boolean {
+  if (a.side !== b.side) return false
+  return segCross(a.diag[0], a.diag[1], b.diag[0], b.diag[1])
+}
+
+function mkLine(id: string, side: Side, label: string, index: number, y: number, edgeY: number): LineDef {
+  const edgeX = side === 'W' ? W_EDGE : E_EDGE
+  const stubX = side === 'W' ? W_STUB : E_STUB
+  return { id, side, label, index, y, edgeX, edgeY, stubX, arrY: y - GAP, depY: y + GAP }
+}
+
+function buildRoutes(lines: LineDef[], platforms: PlatformDef[], reach: (l: LineDef, p: PlatformDef) => boolean) {
+  const routes: RouteDef[] = []
+  const eMap = new Map<string, RouteDef>(), xMap = new Map<string, RouteDef>(), idMap = new Map<string, RouteDef>()
+  for (const line of lines) {
+    for (const pf of platforms) {
+      if (!reach(line, pf)) continue
+      const open = line.side === 'W' ? pf.leftX : pf.rightX
+      const eArr: Pt = { x: line.stubX, y: line.arrY }
+      const oPt: Pt = { x: open, y: pf.y }
+      const entryDiag: [Pt, Pt] = [eArr, oPt]
+      const entryPoly: Pt[] = [{ x: line.edgeX, y: line.edgeY - GAP }, eArr, oPt, { x: pf.centerX, y: pf.y }]
+      const eId = `e:${line.id}:${pf.index}`
+      const er: RouteDef = { id: eId, kind: 'entry', lineId: line.id, side: line.side, platform: pf.index, poly: entryPoly, diag: entryDiag }
+      routes.push(er); eMap.set(`${line.id}:${pf.index}`, er); idMap.set(eId, er)
+
+      const dDep: Pt = { x: line.stubX, y: line.depY }
+      const exitDiag: [Pt, Pt] = [oPt, dDep]
+      const exitPoly: Pt[] = [{ x: pf.centerX, y: pf.y }, oPt, dDep, { x: line.edgeX, y: line.edgeY + GAP }]
+      const xId = `x:${line.id}:${pf.index}`
+      const xr: RouteDef = { id: xId, kind: 'exit', lineId: line.id, side: line.side, platform: pf.index, poly: exitPoly, diag: exitDiag }
+      routes.push(xr); xMap.set(`${line.id}:${pf.index}`, xr); idMap.set(xId, xr)
+    }
+  }
+  return { routes, eMap, xMap, idMap }
 }
 
 export function generateLayout(preset: Preset): Layout {
   const cfg = PRESETS[preset]
-
   const lines: LineDef[] = []
-  for (let i = 0; i < cfg.w; i++) {
-    const y = spread(cfg.w, LINE_TOP, LINE_BOT, i)
-    lines.push({ id: `W${i + 1}`, side: 'W', label: `West ${i + 1}`, index: i, y, edgeX: W_EDGE, stubX: W_STUB, arrY: y - TRACK_GAP, depY: y + TRACK_GAP })
-  }
-  for (let i = 0; i < cfg.e; i++) {
-    const y = spread(cfg.e, LINE_TOP, LINE_BOT, i)
-    lines.push({ id: `E${i + 1}`, side: 'E', label: `Ost ${i + 1}`, index: i, y, edgeX: E_EDGE, stubX: E_STUB, arrY: y - TRACK_GAP, depY: y + TRACK_GAP })
-  }
-
   const platforms: PlatformDef[] = []
-  for (let k = 0; k < cfg.p; k++) {
-    const y = spread(cfg.p, PLAT_TOP, PLAT_BOT, k)
-    platforms.push({ index: k + 1, y, leftX: XPL, rightX: XPR, centerX: (XPL + XPR) / 2, cls: cfg.classes[k] ?? 'LANG' })
-  }
 
-  const routes: RouteDef[] = []
-  const entryMap = new Map<string, RouteDef>()
-  const exitMap = new Map<string, RouteDef>()
-  const idMap = new Map<string, RouteDef>()
-
-  for (const line of lines) {
-    const innerX = line.side === 'W' ? XPL : XPR
-    for (const pf of platforms) {
-      // entry: line arrival track -> platform
-      const entryDiag: [Pt, Pt] = [{ x: line.stubX, y: line.arrY }, { x: innerX, y: pf.y }]
-      const entryPoly: Pt[] = [
-        { x: line.edgeX, y: line.arrY },
-        { x: line.stubX, y: line.arrY },
-        { x: innerX, y: pf.y },
-        { x: pf.centerX, y: pf.y }
-      ]
-      const eId = `e:${line.id}:${pf.index}`
-      const eRoute: RouteDef = { id: eId, kind: 'entry', lineId: line.id, side: line.side, platform: pf.index, poly: entryPoly, diag: entryDiag }
-      routes.push(eRoute); entryMap.set(`${line.id}:${pf.index}`, eRoute); idMap.set(eId, eRoute)
-
-      // exit: platform -> line departure track
-      const exitDiag: [Pt, Pt] = [{ x: innerX, y: pf.y }, { x: line.stubX, y: line.depY }]
-      const exitPoly: Pt[] = [
-        { x: pf.centerX, y: pf.y },
-        { x: innerX, y: pf.y },
-        { x: line.stubX, y: line.depY },
-        { x: line.edgeX, y: line.depY }
-      ]
-      const xId = `x:${line.id}:${pf.index}`
-      const xRoute: RouteDef = { id: xId, kind: 'exit', lineId: line.id, side: line.side, platform: pf.index, poly: exitPoly, diag: exitDiag }
-      routes.push(xRoute); exitMap.set(`${line.id}:${pf.index}`, xRoute); idMap.set(xId, xRoute)
+  if (cfg.type === 'THROUGH') {
+    for (let i = 0; i < cfg.w; i++) { const y = spread(cfg.w, LINE_TOP, LINE_BOT, i); lines.push(mkLine(`W${i + 1}`, 'W', `West ${i + 1}`, i, y, y)) }
+    for (let j = 0; j < cfg.e; j++) { const y = spread(cfg.e, LINE_TOP, LINE_BOT, j); lines.push(mkLine(`E${j + 1}`, 'E', `Ost ${j + 1}`, j, y, y)) }
+    for (let k = 0; k < cfg.p; k++) platforms.push({ index: k + 1, y: spread(cfg.p, PLAT_TOP, PLAT_BOT, k), leftX: PL, rightX: PR, centerX: CENTER, cls: cfg.classes[k] ?? 'LANG', openL: true, openR: true })
+    const reach = (l: LineDef, p: PlatformDef) => {
+      const n = l.side === 'W' ? cfg.w : cfg.e
+      return Math.abs(norm(n, l.index) - norm(cfg.p, p.index - 1)) <= cfg.window
     }
+    return finish(preset, cfg, ['W', 'E'], lines, platforms, reach)
   }
 
+  if (cfg.type === 'TERMINUS') {
+    for (let i = 0; i < cfg.w; i++) { const y = spread(cfg.w, LINE_TOP, LINE_BOT, i); lines.push(mkLine(`W${i + 1}`, 'W', `Strecke ${i + 1}`, i, y, y)) }
+    // bay platforms: open to the west (left), buffer stop on the right
+    for (let k = 0; k < cfg.p; k++) platforms.push({ index: k + 1, y: spread(cfg.p, PLAT_TOP, PLAT_BOT, k), leftX: PL, rightX: PR + 60, centerX: CENTER + 30, cls: cfg.classes[k] ?? 'LANG', openL: true, openR: false })
+    const reach = (l: LineDef, p: PlatformDef) => Math.abs(norm(cfg.w, l.index) - norm(cfg.p, p.index - 1)) <= cfg.window
+    return finish(preset, cfg, ['W'], lines, platforms, reach)
+  }
+
+  // JUNCTION (Abzweig): west lines normal; east lines fan into two branches.
+  for (let i = 0; i < cfg.w; i++) { const y = spread(cfg.w, LINE_TOP + 40, LINE_BOT - 40, i); lines.push(mkLine(`W${i + 1}`, 'W', `West ${i + 1}`, i, y, y)) }
+  // E1 = upper branch (fans up at the edge), E2 = lower branch (fans down)
+  const e1y = spread(2, LINE_TOP, LINE_BOT, 0), e2y = spread(2, LINE_TOP, LINE_BOT, 1)
+  lines.push(mkLine('E1', 'E', 'Ast Nord', 0, e1y, LINE_TOP - 60))
+  lines.push(mkLine('E2', 'E', 'Ast Süd', 1, e2y, LINE_BOT + 60))
+  for (let k = 0; k < cfg.p; k++) platforms.push({ index: k + 1, y: spread(cfg.p, PLAT_TOP, PLAT_BOT, k), leftX: PL, rightX: PR, centerX: CENTER, cls: cfg.classes[k] ?? 'LANG', openL: true, openR: true })
+  const reach = (l: LineDef, p: PlatformDef) => {
+    const pp = norm(cfg.p, p.index - 1)
+    if (l.side === 'W') return Math.abs(norm(cfg.w, l.index) - pp) <= cfg.window
+    // east: Ast Nord serves upper platforms, Ast Süd lower (overlap in the middle)
+    return l.id === 'E1' ? pp <= 0.58 : pp >= 0.42
+  }
+  return finish(preset, cfg, ['W', 'E'], lines, platforms, reach)
+}
+
+function finish(preset: Preset, cfg: StationCfg, sides: Side[], lines: LineDef[], platforms: PlatformDef[], reach: (l: LineDef, p: PlatformDef) => boolean): Layout {
+  const { routes, eMap, xMap, idMap } = buildRoutes(lines, platforms, reach)
   return {
-    preset,
-    name: cfg.name,
-    vw: VW,
-    vh: VH,
-    lines,
-    platforms,
-    routes,
-    entry: (l, p) => entryMap.get(`${l}:${p}`),
-    exit: (l, p) => exitMap.get(`${l}:${p}`),
+    preset, name: cfg.name, type: cfg.type, sides, vw: VW, vh: VH, lines, platforms, routes,
+    entry: (l, p) => eMap.get(`${l}:${p}`),
+    exit: (l, p) => xMap.get(`${l}:${p}`),
     byId: (id) => idMap.get(id)
   }
-}
-
-// proper segment intersection (crossing), excludes collinear/touch-only
-function ccw(a: Pt, b: Pt, c: Pt): number {
-  return Math.sign((c.y - a.y) * (b.x - a.x) - (b.y - a.y) * (c.x - a.x))
-}
-export function segCross(p1: Pt, p2: Pt, p3: Pt, p4: Pt): boolean {
-  const d1 = ccw(p1, p2, p3), d2 = ccw(p1, p2, p4)
-  const d3 = ccw(p3, p4, p1), d4 = ccw(p3, p4, p2)
-  return d1 !== d2 && d3 !== d4
-}
-
-export function routesConflict(a: RouteDef, b: RouteDef): boolean {
-  if (a.side !== b.side) return false
-  return segCross(a.diag[0], a.diag[1], b.diag[0], b.diag[1])
 }

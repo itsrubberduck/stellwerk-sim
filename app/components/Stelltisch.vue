@@ -41,23 +41,25 @@ function draw() {
   // ---- base: harp (all entry diagonals faint) ----
   for (const r of L.routes) if (r.kind === 'entry') line(ctx, r.diag[0], r.diag[1], '#283038', 2)
 
-  // ---- base: line stubs (double track) ----
+  // ---- base: line stubs (double track, edge may be angled for branches) ----
   for (const ln of L.lines) {
-    line(ctx, { x: ln.edgeX, y: ln.arrY }, { x: ln.stubX, y: ln.arrY }, '#5a636e', 5)
-    line(ctx, { x: ln.edgeX, y: ln.depY }, { x: ln.stubX, y: ln.depY }, '#5a636e', 5)
-    // small switch diamonds where stubs meet throat
+    line(ctx, { x: ln.edgeX, y: ln.edgeY - 9 }, { x: ln.stubX, y: ln.arrY }, '#5a636e', 5)
+    line(ctx, { x: ln.edgeX, y: ln.edgeY + 9 }, { x: ln.stubX, y: ln.depY }, '#5a636e', 5)
     diamond(ctx, { x: ln.stubX, y: ln.y }, 5, '#7a8590')
     const lx = ln.side === 'W' ? ln.edgeX + 6 : ln.edgeX - 6
-    text(ctx, ln.label.toUpperCase(), lx, ln.y - 22, '#6b7682', 20, ln.side === 'W' ? 'left' : 'right')
+    text(ctx, ln.label.toUpperCase(), lx, ln.edgeY - 22, '#6b7682', 19, ln.side === 'W' ? 'left' : 'right')
   }
 
-  // ---- base: platforms ----
+  // ---- base: platforms (with buffer stops for bay tracks) ----
   for (const pf of L.platforms) {
     line(ctx, { x: pf.leftX, y: pf.y }, { x: pf.rightX, y: pf.y }, '#5a636e', 6)
+    if (!pf.openR) buffer(ctx, pf.rightX, pf.y)
+    if (!pf.openL) buffer(ctx, pf.leftX, pf.y)
     if (snap.platformDisabled[pf.index - 1]) hatch(ctx, pf.leftX, pf.rightX, pf.y)
-    text(ctx, `Gl ${pf.index}`, pf.leftX - 14, pf.y - 9, '#8b97a3', 22, 'right')
+    const lblX = pf.openL ? pf.leftX - 14 : pf.leftX + 30
+    text(ctx, `Gl ${pf.index}`, lblX, pf.y - 9, '#8b97a3', 22, pf.openL ? 'right' : 'left')
     const m = PLATFORM_CLASS_META[pf.cls]
-    text(ctx, m.tag, pf.leftX - 14, pf.y + 11, m.color, 16, 'right')
+    text(ctx, m.tag, lblX, pf.y + 11, m.color, 16, pf.openL ? 'right' : 'left')
   }
 
   // ---- reserved (vorgemerkte) routes: dashed amber ----
@@ -114,17 +116,20 @@ function draw() {
     signal(ctx, { x: ln.side === 'W' ? ln.edgeX + 22 : ln.edgeX - 22, y: ln.arrY }, c, L.vw)
   }
 
-  // ---- side fault overlay ----
-  for (const side of ['W', 'E'] as const) {
+  // ---- side fault overlay (generic per existing head) ----
+  for (const side of L.sides) {
     if (!snap.sideDisabled[side]) continue
-    const x = side === 'W' ? (W_THROAT_X) : (E_THROAT_X)
-    ctx.fillStyle = 'rgba(255,59,48,0.10)'; ctx.fillRect(side === 'W' ? 360 : 1040, 80, 200, L.vh - 160)
-    text(ctx, 'KOPF GESTÖRT', x, 70, '#ff3b30', 22, 'center')
+    const sideLines = L.lines.filter(l => l.side === side)
+    if (!sideLines.length) continue
+    const stubX = sideLines[0]!.stubX
+    const platEdge = side === 'W' ? Math.min(...L.platforms.map(p => p.leftX)) : Math.max(...L.platforms.map(p => p.rightX))
+    const x0 = Math.min(stubX, platEdge), x1 = Math.max(stubX, platEdge)
+    ctx.fillStyle = 'rgba(255,59,48,0.10)'; ctx.fillRect(x0, 80, x1 - x0, L.vh - 160)
+    text(ctx, 'KOPF GESTÖRT', (x0 + x1) / 2, 70, '#ff3b30', 22, 'center')
   }
 
   raf = requestAnimationFrame(draw)
 }
-const W_THROAT_X = 460, E_THROAT_X = 1140
 
 function signalColor(snap: GameSnapshot, lineId: string): 'r' | 'g' | 'off' {
   const t = snap.trains.find(x => (x.state === 'ENTERING' && x.entryLine === lineId) || (x.state === 'EXITING' && x.exitLine === lineId))
@@ -164,6 +169,9 @@ function signal(ctx: CanvasRenderingContext2D, p: Pt, c: 'r' | 'g' | 'off', vw: 
 }
 function diamond(ctx: CanvasRenderingContext2D, p: Pt, r: number, color: string) {
   ctx.fillStyle = color; ctx.beginPath(); ctx.moveTo(p.x, p.y - r); ctx.lineTo(p.x + r, p.y); ctx.lineTo(p.x, p.y + r); ctx.lineTo(p.x - r, p.y); ctx.closePath(); ctx.fill()
+}
+function buffer(ctx: CanvasRenderingContext2D, x: number, y: number) {
+  ctx.strokeStyle = '#8b97a3'; ctx.lineWidth = 4; ctx.beginPath(); ctx.moveTo(x, y - 11); ctx.lineTo(x, y + 11); ctx.stroke()
 }
 function hatch(ctx: CanvasRenderingContext2D, x0: number, x1: number, y: number) {
   ctx.save(); ctx.strokeStyle = '#ffb020'; ctx.lineWidth = 4

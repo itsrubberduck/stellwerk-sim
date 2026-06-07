@@ -11,7 +11,7 @@ const view = ref<'setup' | 'panel'>('setup')
 onMounted(() => { try { name.value = localStorage.getItem('swk_name') || '' } catch {} })
 
 const s = computed(() => snapshot.value)
-const layout = computed(() => generateLayout(s.value?.preset ?? 'MITTEL'))
+const layout = computed(() => generateLayout(s.value?.preset ?? 'KNOTEN'))
 const lines = computed(() => layout.value.lines)
 const me = computed(() => s.value?.players.find(p => p.id === playerId.value))
 const mySectors = computed<string[]>(() => s.value?.soloMode ? lines.value.map(l => l.id) : (me.value?.sectors ?? []))
@@ -38,7 +38,8 @@ function depTrackBusy(lineId: string): boolean {
 function platformOcc(p: number) { return !!s.value && s.value.platforms[p - 1] != null }
 function platformBlocked(p: number) { return !!s.value && s.value.platformDisabled[p - 1] }
 function compatible(t: TrainView, p: number) { return kindAllowed(t.kind, platformCls(p)) }
-function canReserve(t: TrainView, p: number) { return compatible(t, p) && !platformBlocked(p) }
+function reachable(t: TrainView, p: number) { return !!layout.value.entry(t.entryLine, p) && !!layout.value.exit(t.exitLine, p) }
+function canReserve(t: TrainView, p: number) { return compatible(t, p) && reachable(t, p) && !platformBlocked(p) }
 
 function reserveEntry(t: TrainView, p: number) { if (canReserve(t, p)) sendMsg({ t: 'setEntry', trainId: t.id, platform: p }) }
 function reserveExit(t: TrainView) { sendMsg({ t: 'setExit', trainId: t.id }) }
@@ -109,6 +110,7 @@ const conn = (t: TrainView) => t.connectionId ? (s.value?.trains.find(x => x.id 
       </div>
       <div v-if="globalStop" class="vollhalt">🛑 PERSON IM GLEIS — VOLLHALT</div>
       <div v-if="s?.phase === 'GAMEOVER'" class="vollhalt">Betrieb eingestellt</div>
+      <div v-if="!s?.soloMode && mySectors.length === 0" class="reassign" @click="view = 'setup'">Stellwerk gewechselt — tippe hier, um Sektoren neu zu wählen</div>
 
       <section>
         <h3>Einfahrten <span v-if="arrivals.length" class="cnt">{{ arrivals.length }}</span></h3>
@@ -128,7 +130,7 @@ const conn = (t: TrainView) => t.connectionId ? (s.value?.trains.find(x => x.id 
           </div>
           <div v-else class="plat-row" :style="{ gridTemplateColumns: `repeat(${Math.min(platforms.length, 4)}, 1fr)` }">
             <button v-for="pf in platforms" :key="pf.index" class="key plat"
-              :class="{ soll: pf.index === t.sollPlatform, occ: platformOcc(pf.index), bad: !compatible(t, pf.index) }"
+              :class="{ soll: pf.index === t.sollPlatform, occ: platformOcc(pf.index), bad: !compatible(t, pf.index) || !reachable(t, pf.index) }"
               :disabled="!canReserve(t, pf.index)" @click="reserveEntry(t, pf.index)">
               <span>Gl {{ pf.index }}</span>
               <span class="ptag" :style="{ color: PLATFORM_CLASS_META[pf.cls].color }">{{ PLATFORM_CLASS_META[pf.cls].tag }}{{ platformOcc(pf.index) ? '·belegt' : '' }}</span>
@@ -186,6 +188,7 @@ const conn = (t: TrainView) => t.connectionId ? (s.value?.trains.find(x => x.id 
 .hpill { flex: 1; display: flex; align-items: center; gap: 8px; justify-content: center; padding: 10px; border: 2px solid var(--grid); background: var(--panel-2); font-weight: 700; }
 .hpill.bad { border-color: var(--red); } .hpill.ok { border-color: var(--green); }
 .vollhalt { background: #3a1816; border: 2px solid var(--red); color: #ffd0cc; font-weight: 800; text-align: center; padding: 14px; animation: blink 0.7s steps(2) infinite; }
+.reassign { background: #2a2410; border: 2px solid var(--amber); color: #ffe6b0; font-weight: 700; text-align: center; padding: 14px; }
 @keyframes blink { 50% { opacity: 0.5; } }
 
 h3 { margin: 6px 0 8px; font-size: 14px; text-transform: uppercase; letter-spacing: 0.06em; color: var(--muted); display: flex; align-items: center; gap: 8px; }

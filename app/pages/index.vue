@@ -17,16 +17,18 @@ watch(() => snapshot.value?.roomCode, async (code) => {
 
 const s = computed(() => snapshot.value)
 const phase = computed(() => s.value?.phase ?? 'LOBBY')
-const layout = computed(() => generateLayout(s.value?.preset ?? 'MITTEL'))
+const layout = computed(() => generateLayout(s.value?.preset ?? 'KNOTEN'))
 const lines = computed(() => layout.value.lines)
 const ownerOf = (id: string) => s.value?.players.find(p => p.sectors.includes(id))
 const fmtTime = (sec: number) => `${Math.floor(sec / 60)}:${String(sec % 60).padStart(2, '0')}`
 const presetList = Object.keys(PRESETS) as Preset[]
+const showSwitch = ref(false)
 
 function start() { sendMsg({ t: 'start' }) }
 function restart() { sendMsg({ t: 'restart' }) }
 function toggleSolo() { sendMsg({ t: 'setSolo', solo: !s.value?.soloMode }) }
 function pickPreset(p: Preset) { sendMsg({ t: 'setPreset', preset: p }) }
+function switchTo(p: Preset) { pickPreset(p); showSwitch.value = false }
 </script>
 
 <template>
@@ -63,7 +65,7 @@ function pickPreset(p: Preset) { sendMsg({ t: 'setPreset', preset: p }) }
       </div>
 
       <div class="lobby-right">
-        <div class="sector-head">Sektoren · {{ PRESETS[s?.preset ?? 'MITTEL'].name }}</div>
+        <div class="sector-head">Sektoren · {{ PRESETS[s?.preset ?? 'KNOTEN'].name }}</div>
         <div class="sector-grid" :style="{ gridTemplateColumns: lines.length > 4 ? '1fr 1fr 1fr' : '1fr 1fr' }">
           <div v-for="ln in lines" :key="ln.id" class="sector-card" :class="{ taken: !!ownerOf(ln.id), w: ln.side === 'W', e: ln.side === 'E' }">
             <div class="sector-id mono">{{ ln.id }}</div>
@@ -91,10 +93,19 @@ function pickPreset(p: Preset) { sendMsg({ t: 'setPreset', preset: p }) }
         <div class="stat"><div class="num warn-num">{{ s?.forcedBrakes }}</div><div class="lbl">Zwangsbr.</div></div>
         <div class="stat"><div class="num" :class="{ low: (s?.backlog ?? 0) > (s?.maxBacklog ?? 9) * 0.6 }">{{ s?.backlog }}/{{ s?.maxBacklog }}</div><div class="lbl">Rückstau</div></div>
         <div class="spacer" />
+        <div class="switcher">
+          <button class="key switch-btn" @click="showSwitch = !showSwitch">⌖ {{ PRESETS[s?.preset ?? 'KNOTEN'].name }} ▾</button>
+          <div v-if="showSwitch" class="switch-pop">
+            <div class="switch-hint">Stellwerk wechseln (im Betrieb):</div>
+            <button v-for="p in presetList" :key="p" class="key switch-item" :class="{ on: s?.preset === p }" @click="switchTo(p)">
+              {{ PRESETS[p].name }} <span class="muted mono">{{ PRESETS[p].w + PRESETS[p].e }}L·{{ PRESETS[p].p }}G</span>
+            </button>
+          </div>
+        </div>
         <div class="stat"><div class="num">{{ fmtTime(s?.elapsed ?? 0) }}</div><div class="lbl">{{ PHASE_LABEL[phase] }}</div></div>
         <div class="heads">
           <div class="head-pill"><span class="led" :class="s?.sideDisabled.W ? 'r' : 'g'" /> West</div>
-          <div class="head-pill"><span class="led" :class="s?.sideDisabled.E ? 'r' : 'g'" /> Ost</div>
+          <div v-if="layout.sides.includes('E')" class="head-pill"><span class="led" :class="s?.sideDisabled.E ? 'r' : 'g'" /> Ost</div>
         </div>
       </header>
 
@@ -175,6 +186,12 @@ function pickPreset(p: Preset) { sendMsg({ t: 'setPreset', preset: p }) }
 .spacer { flex: 1; }
 .heads { display: flex; gap: 10px; }
 .head-pill { background: var(--panel-2); border: 2px solid var(--grid); padding: 8px 12px; font-weight: 700; display: flex; align-items: center; gap: 8px; }
+.switcher { position: relative; }
+.switch-btn { padding: 10px 14px; font-size: 13px; }
+.switch-pop { position: absolute; top: 110%; right: 0; z-index: 30; background: var(--panel); border: 2px solid var(--grid); padding: 8px; display: flex; flex-direction: column; gap: 6px; min-width: 230px; }
+.switch-hint { font-size: 11px; color: var(--muted); text-transform: uppercase; letter-spacing: 0.06em; padding: 2px 4px 6px; }
+.switch-item { display: flex; justify-content: space-between; align-items: center; gap: 12px; padding: 12px 14px; font-size: 14px; text-transform: none; letter-spacing: 0; }
+.switch-item.on { border-color: var(--accent); background: #2a2410; }
 
 .board { position: relative; flex: 1; min-height: 0; }
 .disturb { position: absolute; top: 12px; left: 50%; transform: translateX(-50%); display: flex; gap: 12px; flex-wrap: wrap; justify-content: center; }
