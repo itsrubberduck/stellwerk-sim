@@ -53,7 +53,7 @@ function trainPos(t: TrainView): Pt | null {
 function draw() {
   raf = requestAnimationFrame(draw) // schedule first so an error never kills the loop
   const cv = canvas.value; if (!cv) return
-  try { drawBody(cv) } catch (e) { (window as any).__drawErr = String((e as Error)?.stack || e); console.error('StationCanvas draw error:', e) }
+  try { drawBody(cv) } catch (e) { console.error('StationCanvas draw error:', e) }
 }
 function drawBody(cv: HTMLCanvasElement) {
   const L = props.layout, snap = props.station
