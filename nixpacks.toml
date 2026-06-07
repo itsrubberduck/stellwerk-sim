@@ -1,0 +1,19 @@
+[phases.setup]
+nixPkgs = ['nodejs', 'yarn']
+
+[variables]
+NODE_VERSION = "25"
+YARN_VERSION = "4.12.0"
+
+[phases.install]
+cmds = [
+    "corepack enable",
+    "corepack prepare yarn@4.12.0 --activate",
+    "yarn install"
+]
+
+[phases.build]
+cmds = ["yarn build"]
+
+[start]
+cmd = "node .output/server/index.mjs"
