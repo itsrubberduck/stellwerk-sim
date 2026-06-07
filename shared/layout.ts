@@ -47,7 +47,11 @@ export interface PlatformDef {
   cls: PlatformClass
   openL: boolean
   openR: boolean
+  barL?: number // platform-edge extent (varies by length/class + stagger); set in finish()
+  barR?: number
 }
+
+export interface SidingDef { index: number, y: number, leftX: number, rightX: number, centerX: number }
 
 export interface RouteDef {
   id: string
@@ -68,6 +72,7 @@ export interface Layout {
   vh: number
   lines: LineDef[]
   platforms: PlatformDef[]
+  sidings: SidingDef[]
   routes: RouteDef[]
   entry: (lineId: string, platform: number) => RouteDef | undefined
   exit: (lineId: string, platform: number) => RouteDef | undefined
@@ -175,14 +180,31 @@ export function generateLayout(preset: Preset): Layout {
   return finish(preset, cfg.name, cfg.type, ['W', 'E'], lines, platforms, reach)
 }
 
-function finish(preset: Preset, name: string, type: StationType, sides: Side[], lines: LineDef[], platforms: PlatformDef[], reach: (l: LineDef, p: PlatformDef) => boolean): Layout {
+function finish(preset: Preset, name: string, type: StationType, sides: Side[], lines: LineDef[], platforms: PlatformDef[], reach: (l: LineDef, p: PlatformDef) => boolean, sidings: SidingDef[] = []): Layout {
+  // organic variety: asymmetric switch positions, staggered platforms, variable bar lengths
+  lines.forEach((l, i) => { l.stubX += (l.side === 'W' ? 1 : -1) * (i % 2 ? 16 : -11) })
+  platforms.forEach((pf, i) => { pf.y += (i % 2 ? 13 : -9) })
+  for (const pf of platforms) {
+    const f = pf.cls === 'KURZ' ? 0.5 : pf.cls === 'GUETER' ? 0.78 : 1.0
+    const span = pf.rightX - pf.leftX, len = span * f
+    const off = (pf.index % 2 === 0 ? 0.14 : -0.05) * span
+    const l = Math.max(pf.leftX + 6, Math.min(pf.leftX + (span - len) / 2 + off, pf.rightX - len - 6))
+    pf.barL = l; pf.barR = l + len
+  }
   const { routes, eMap, xMap, idMap } = buildRoutes(lines, platforms, reach)
   return {
-    preset, name, type, sides, vw: VW, vh: VH, lines, platforms, routes,
+    preset, name, type, sides, vw: VW, vh: VH, lines, platforms, sidings, routes,
     entry: (l, p) => eMap.get(`${l}:${p}`),
     exit: (l, p) => xMap.get(`${l}:${p}`),
     byId: (id) => idMap.get(id)
   }
+}
+
+function corridorSidings(): SidingDef[] {
+  return [
+    { index: 1, y: 766, leftX: PL + 150, rightX: PR - 150, centerX: CENTER },
+    { index: 2, y: 812, leftX: PL + 150, rightX: PR - 150, centerX: CENTER }
+  ]
 }
 
 // ---- corridor station types (selectable per station) ----
@@ -211,7 +233,7 @@ export function buildCorridorStation(name: string, kind: CorridorKind, wCount: n
     if (kind === 'ABZWEIG') return tp < 0.5 ? pp <= 0.6 : pp >= 0.4
     return Math.abs(tp - pp) <= 0.5
   }
-  return finish('KNOTEN', name, 'THROUGH', ['W', 'E'], lines, platforms, reach)
+  return finish('KNOTEN', name, 'THROUGH', ['W', 'E'], lines, platforms, reach, corridorSidings())
 }
 
 export function buildCorridorTerminus(name: string, linkSide: Side, linkCount: number): Layout {
@@ -222,7 +244,7 @@ export function buildCorridorTerminus(name: string, linkSide: Side, linkCount: n
   const platforms: PlatformDef[] = []
   for (let k = 0; k < p; k++) platforms.push({ index: k + 1, y: spread(p, PLAT_TOP, PLAT_BOT, k), leftX: PL, rightX: PR, centerX: CENTER, cls: classes[k] ?? 'LANG', openL: linkSide === 'W', openR: linkSide === 'E' })
   const reach = (l: LineDef, pf: PlatformDef) => Math.abs(norm(linkCount, l.index) - norm(p, pf.index - 1)) <= 0.6
-  return finish('KNOTEN', name, 'TERMINUS', [linkSide], lines, platforms, reach)
+  return finish('KNOTEN', name, 'TERMINUS', [linkSide], lines, platforms, reach, corridorSidings())
 }
 
 // Build a through-station layout with explicit side line counts — used by the

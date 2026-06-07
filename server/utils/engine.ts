@@ -10,6 +10,8 @@ import { defaultTypes, generateNetwork, type LinkDef, type NetworkDef, type Side
 
 const ENTER_TIME = 4.0
 const EXIT_TIME = 3.6
+const PARK_TIME = 4.0
+const RETRIEVE_TIME = 4.0
 const DWELL_TIME = 9
 const PUNCTUAL_THRESHOLD = 50
 const PREVIEW_LEN = 6
@@ -46,6 +48,8 @@ interface Train {
   connectionMet: boolean
   stuckLeft: number
   routeId: string | null
+  sidingIndex: number | null
+  staged: boolean
   resv: Resv | null
 }
 interface Spec { number: string, kind: TrainKind, dir: 'E' | 'W' }
@@ -54,10 +58,12 @@ interface Player { id: string, name: string, station: string | null, connected: 
 class Station {
   platforms: (string | null)[]
   platformDisabled: boolean[]
+  sidings: (string | null)[]
   sideDisabled: Record<Side, boolean> = { W: false, E: false }
   constructor(public def: StationDef) {
     this.platforms = Array(def.layout.platforms.length).fill(null)
     this.platformDisabled = Array(def.layout.platforms.length).fill(false)
+    this.sidings = Array(def.layout.sidings.length).fill(null)
   }
   get layout(): Layout { return this.def.layout }
 }
@@ -107,7 +113,7 @@ export class GameEngine {
     this.stations = new Map(this.net.stations.map(s => [s.id, new Station(s)]))
     this.links = new Map(this.net.links.map(l => [l.id, { def: l, occupant: Array(l.tracks).fill(null) }]))
   }
-  get maxBacklog() { return 10 }
+  get maxBacklog() { return 14 } // sidings buffer overflow -> more lenient
 
   // ---------- lifecycle ----------
   setNetwork(count: number) {
@@ -128,7 +134,7 @@ export class GameEngine {
   restart() { this.reset(true) }
   private reset(toLobby: boolean) {
     this.elapsed = 0
-    for (const s of this.stations.values()) { s.platforms.fill(null); s.platformDisabled.fill(false); s.sideDisabled = { W: false, E: false } }
+    for (const s of this.stations.values()) { s.platforms.fill(null); s.platformDisabled.fill(false); s.sidings.fill(null); s.sideDisabled = { W: false, E: false } }
     for (const l of this.links.values()) l.occupant.fill(null)
     this.trains = []; this.pending = []; this.preview = []; this.nextSpawnIn = 0; this.resvSeq = 0
     this.score = 0; this.punctual = 0; this.departed = 0; this.deviations = 0; this.handoffs = 0; this.forcedBrakes = 0
@@ -197,21 +203,22 @@ export class GameEngine {
     return `GZ ${40000 + Math.floor(Math.random() * 9000)}`
   }
 
-  private buildSoll(kind: TrainKind, dir: 'E' | 'W'): { soll: Record<string, SollLeg>, firstLine: string, originTerminus: boolean } | null {
+  private buildSoll(kind: TrainKind, dir: 'E' | 'W', staged: boolean): { soll: Record<string, SollLeg>, firstLine: string, originTerminus: boolean } | null {
     const order = this.order(dir)
     const eSide = this.entrySide(dir), fSide = this.forwardSide(dir)
     const first = order[0]!
     const originTerminus = this.roleOf(first, eSide).kind === 'END'
+    const originNoEntry = originTerminus || staged
     const entryLines = first.layout.lines.filter(l => l.side === eSide)
     for (let attempt = 0; attempt < 40; attempt++) {
       const soll: Record<string, SollLeg> = {}
-      let arrLine = originTerminus ? '' : rnd(entryLines).id
+      let arrLine = originNoEntry ? '' : rnd(entryLines).id
       let ok = true
       for (let i = 0; i < order.length; i++) {
         const sdef = order[i]!
         const last = i === order.length - 1
         const finalTerminus = last && this.roleOf(sdef, fSide).kind === 'END'
-        const needEntry = !(i === 0 && originTerminus)
+        const needEntry = !(i === 0 && originNoEntry)
         const cand = sdef.layout.platforms.filter(p =>
           kindAllowed(kind, p.cls) &&
           (!needEntry || sdef.layout.entry(arrLine, p.index)) &&
@@ -229,7 +236,7 @@ export class GameEngine {
       }
       if (ok) {
         let firstLine = ''
-        if (!originTerminus) {
+        if (!originNoEntry) {
           const pf = soll[first.id]!.platform
           const c = first.layout.lines.filter(l => l.side === eSide && first.layout.entry(l.id, pf))
           firstLine = (c[0] ?? first.layout.lines.find(l => l.side === eSide)!).id
@@ -241,15 +248,16 @@ export class GameEngine {
   }
 
   private spawnFromSpec(spec: Spec) {
-    const built = this.buildSoll(spec.kind, spec.dir)
+    const staged = this.phase !== 'RUHE' && Math.random() < 0.16
+    const built = this.buildSoll(spec.kind, spec.dir, staged)
     if (!built) return
     const order = this.order(spec.dir)
     const firstStation = order[0]!.id
     const t: Train = {
       id: uid('t'), number: spec.number, kind: spec.kind, dir: spec.dir,
-      station: firstStation, originTerminus: built.originTerminus, arrLine: built.firstLine, arrLink: null, exitLine: null, platform: null,
+      station: firstStation, originTerminus: staged ? false : built.originTerminus, arrLine: built.firstLine, arrLink: null, exitLine: null, platform: null,
       soll: built.soll, deviated: false, state: 'PENDING', delaySec: 0, progress: 0, dwellLeft: 0,
-      connectionId: null, connectionMet: false, stuckLeft: 0, routeId: null, resv: null
+      connectionId: null, connectionMet: false, stuckLeft: 0, routeId: null, sidingIndex: null, staged, resv: null
     }
     if (this.phase !== 'RUHE' && Math.random() < 0.18) {
       const partner = this.trains.find(o => !o.connectionId && (o.state === 'APPROACH' || o.state === 'DWELL'))
@@ -262,7 +270,11 @@ export class GameEngine {
     for (let i = 0; i < this.pending.length;) {
       const t = this.pending[i]!
       let placed = false
-      if (t.originTerminus) {
+      if (t.staged) {
+        // bereitgestellt: starts parked in a siding, must be retrieved by the player
+        const s = this.st(t.station); const free = s ? s.sidings.findIndex(x => !x) : -1
+        if (s && free >= 0) { s.sidings[free] = t.id; t.sidingIndex = free + 1; t.state = 'PARKED'; placed = true }
+      } else if (t.originTerminus) {
         // originates at a terminus bay: needs the soll bay free
         const s = this.st(t.station); const leg = t.station ? t.soll[t.station] : undefined
         if (s && leg && !s.platforms[leg.platform - 1] && !s.platformDisabled[leg.platform - 1]) {
@@ -296,6 +308,30 @@ export class GameEngine {
     return true
   }
   cancelResv(trainId: string): boolean { const t = this.trains.find(x => x.id === trainId); if (!t) return false; t.resv = null; return true }
+
+  // ---- sidings: park (Abstellen) / retrieve (Bereitstellen) ----
+  park(trainId: string, siding: number): boolean {
+    const t = this.trains.find(x => x.id === trainId); const s = this.st(t?.station ?? null)
+    if (!t || !s || t.platform == null) return false
+    if (t.state !== 'DWELL' && t.state !== 'READY_DEPART') return false
+    const idx = siding - 1
+    if (idx < 0 || idx >= s.sidings.length || s.sidings[idx]) return false
+    s.platforms[t.platform - 1] = null // free the platform
+    s.sidings[idx] = t.id
+    t.sidingIndex = siding; t.state = 'PARKING'; t.progress = 0; t.resv = null; t.routeId = null
+    return true
+  }
+  retrieve(trainId: string, platform: number): boolean {
+    const t = this.trains.find(x => x.id === trainId); const s = this.st(t?.station ?? null)
+    if (!t || !s || t.state !== 'PARKED' || t.sidingIndex == null) return false
+    const idx = platform - 1
+    if (idx < 0 || idx >= s.platforms.length || s.platforms[idx] || s.platformDisabled[idx]) return false
+    if (!kindAllowed(t.kind, s.layout.platforms[idx]!.cls)) return false
+    s.sidings[t.sidingIndex - 1] = null // free siding
+    s.platforms[idx] = t.id
+    t.platform = platform; t.state = 'RETRIEVING'; t.progress = 0
+    return true
+  }
 
   private commitReservations() {
     const cands = this.trains.filter(t => t.resv &&
@@ -348,6 +384,9 @@ export class GameEngine {
           break
         case 'DWELL': t.dwellLeft -= dt; if (t.dwellLeft <= 0) { t.dwellLeft = 0; if (this.isFinalTerminus(t)) this.terminate(t); else t.state = 'READY_DEPART' } break
         case 'EXITING': t.progress += dt / EXIT_TIME; if (t.progress >= 1) this.finishLeg(t); break
+        case 'PARKING': t.progress += dt / PARK_TIME; if (t.progress >= 1) { t.progress = 1; t.state = 'PARKED'; t.platform = null } break
+        case 'RETRIEVING': t.progress += dt / RETRIEVE_TIME; if (t.progress >= 1) { t.progress = 1; t.state = 'READY_DEPART'; t.sidingIndex = null } break
+        case 'PARKED': break // parked trains buy time (no delay accrual)
         case 'STUCK': t.delaySec += dt; t.stuckLeft -= dt; if (t.stuckLeft <= 0) t.state = 'DWELL'; break
       }
       if (t.connectionId) { const o = this.trains.find(x => x.id === t.connectionId); if (o && t.state === 'DWELL' && o.state === 'DWELL') { t.connectionMet = true; o.connectionMet = true } }
@@ -393,7 +432,7 @@ export class GameEngine {
       netTypes: [...this.netTypes],
       phase: this.phase,
       elapsed: Math.floor(this.elapsed),
-      stations: this.net.stations.map(sd => { const s = this.stations.get(sd.id)!; return { id: sd.id, platforms: [...s.platforms], platformDisabled: [...s.platformDisabled], sideDisabled: { W: s.sideDisabled.W, E: s.sideDisabled.E } } }),
+      stations: this.net.stations.map(sd => { const s = this.stations.get(sd.id)!; return { id: sd.id, platforms: [...s.platforms], platformDisabled: [...s.platformDisabled], sidings: [...s.sidings], sideDisabled: { W: s.sideDisabled.W, E: s.sideDisabled.E } } }),
       links: this.net.links.map(l => ({ id: l.id, a: l.a, b: l.b, occupant: [...this.links.get(l.id)!.occupant] })),
       trains: this.trains.map(t => {
         const soll = t.station ? t.soll[t.station] : undefined
@@ -402,7 +441,7 @@ export class GameEngine {
           exitLine: t.exitLine, platform: t.platform, sollPlatform: soll?.platform ?? 0, sollExitLine: soll?.exitLine ?? '',
           deviated: t.deviated, state: t.state as TrainState, delaySec: Math.floor(t.delaySec), progress: t.progress,
           dwellLeft: Math.max(0, Math.ceil(t.dwellLeft)), connectionId: t.connectionId, connectionMet: t.connectionMet,
-          routeId: t.routeId, resvKind: t.resv?.kind ?? null, resvPlatform: t.resv?.kind === 'entry' ? (t.resv.platform ?? null) : null,
+          routeId: t.routeId, sidingIndex: t.sidingIndex, staged: t.staged, resvKind: t.resv?.kind ?? null, resvPlatform: t.resv?.kind === 'entry' ? (t.resv.platform ?? null) : null,
           resvExitLine: t.resv?.kind === 'exit' ? (t.resv.exitLine ?? null) : null
         }
       }),

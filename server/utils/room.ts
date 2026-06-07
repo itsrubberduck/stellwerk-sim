@@ -93,6 +93,12 @@ class Room {
       case 'setExit':
         e.setExit(msg.trainId, msg.exitLine)
         break
+      case 'park':
+        e.park(msg.trainId, msg.siding)
+        break
+      case 'retrieve':
+        e.retrieve(msg.trainId, msg.platform)
+        break
       case 'cancelResv':
         e.cancelResv(msg.trainId)
         break

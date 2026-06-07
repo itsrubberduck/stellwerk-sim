@@ -55,6 +55,11 @@ function onTrainClick(p: { id: string, x: number, y: number }) { sel.value = p }
 function reserveEntry(t: TrainView, p: number) { if (canEntry(t, p)) sendMsg({ t: 'setEntry', trainId: t.id, platform: p }) }
 function reserveExit(t: TrainView, line: string) { sendMsg({ t: 'setExit', trainId: t.id, exitLine: line }) }
 function cancel(t: TrainView) { sendMsg({ t: 'cancelResv', trainId: t.id }) }
+const sidings = computed(() => myLayout.value?.sidings ?? [])
+function sidingFree(i: number) { return !!stationView.value && stationView.value.sidings[i - 1] == null }
+function park(t: TrainView, sd: number) { sendMsg({ t: 'park', trainId: t.id, siding: sd }) }
+function retrieve(t: TrainView, p: number) { sendMsg({ t: 'retrieve', trainId: t.id, platform: p }) }
+function canRetrieve(t: TrainView, p: number) { return !platformOcc(p) && !platformBlocked(p) && compatible(t, p) }
 const platforms = computed(() => myLayout.value?.platforms ?? [])
 const menuPos = computed(() => sel.value ? { left: Math.min(sel.value.x, (typeof window !== 'undefined' ? window.innerWidth : 1000) - 280) + 'px', top: Math.min(sel.value.y, (typeof window !== 'undefined' ? window.innerHeight : 800) - 320) + 'px' } : {})
 </script>
@@ -129,16 +134,32 @@ const menuPos = computed(() => sel.value ? { left: Math.min(sel.value.x, (typeof
             </div>
           </template>
 
-          <!-- exit: pick line / hand-over track -->
+          <!-- exit: pick line / hand-over track + park -->
           <template v-else-if="selTrain.state === 'DWELL' || selTrain.state === 'READY_DEPART'">
-            <div class="menu-label">Ausfahrt / Übergabe über:</div>
+            <div v-if="exitOptions(selTrain).length" class="menu-label">Ausfahrt / Übergabe über:</div>
             <div class="opt-list">
               <button v-for="l in exitOptions(selTrain)" :key="l.id" class="key opt wide"
                 :class="{ soll: l.id === selTrain.sollExitLine, bad: linkBusy(l.id) }" @click="reserveExit(selTrain, l.id)">
                 {{ exitLabel(l.id) }}<span v-if="linkBusy(l.id)" class="muted"> · belegt</span>
               </button>
             </div>
+            <div v-if="sidings.length" class="menu-label">Abstellen (Rangieren):</div>
+            <div v-if="sidings.length" class="opt-grid">
+              <button v-for="sd in sidings" :key="sd.index" class="key opt park" :disabled="!sidingFree(sd.index)" @click="park(selTrain, sd.index)">Abst {{ sd.index }}</button>
+            </div>
             <div v-if="selTrain.state === 'DWELL'" class="muted sm">hält noch {{ selTrain.dwellLeft }}s (vormerkbar)</div>
+          </template>
+
+          <!-- parked: bring back to a platform -->
+          <template v-else-if="selTrain.state === 'PARKED'">
+            <div class="menu-label">Bereitstellen auf Gleis:</div>
+            <div class="opt-grid">
+              <button v-for="pf in platforms" :key="pf.index" class="key opt"
+                :class="{ soll: pf.index === selTrain.sollPlatform, occ: platformOcc(pf.index), bad: !compatible(selTrain, pf.index) }"
+                :disabled="!canRetrieve(selTrain, pf.index)" @click="retrieve(selTrain, pf.index)">
+                Gl {{ pf.index }} <span class="tag" :style="{ color: PLATFORM_CLASS_META[pf.cls].color }">{{ PLATFORM_CLASS_META[pf.cls].tag }}</span>
+              </button>
+            </div>
           </template>
 
           <div v-else class="muted sm">fährt …</div>
@@ -186,6 +207,7 @@ const menuPos = computed(() => sel.value ? { left: Math.min(sel.value.x, (typeof
 .opt .tag { font-size: 10px; }
 .opt.soll { border-color: var(--accent); box-shadow: inset 0 0 0 1px var(--accent); }
 .opt.occ { opacity: 0.9; } .opt.bad { opacity: 0.35; }
+.opt.park { border-color: #5a4fb0; color: #cfc8ff; }
 .resv { display: flex; align-items: center; gap: 8px; margin-top: 8px; background: #2a2410; border: 2px dashed var(--amber); padding: 10px; font-size: 13px; color: #ffe6b0; }
 .resv .sm { margin-left: auto; padding: 8px 10px; }
 

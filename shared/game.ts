@@ -11,6 +11,7 @@ export const TRAIN_KINDS: Record<TrainKind, TrainKindMeta> = {
 
 export type TrainState =
   | 'APPROACH' | 'ENTERING' | 'DWELL' | 'READY_DEPART' | 'EXITING' | 'DEPARTED' | 'STUCK'
+  | 'PARKING' | 'PARKED' | 'RETRIEVING'
 
 export type Phase = 'LOBBY' | 'RUHE' | 'BERUFSVERKEHR' | 'STOERUNGSBETRIEB' | 'GAMEOVER'
 export const PHASE_LABEL: Record<Phase, string> = {
@@ -37,6 +38,8 @@ export interface TrainView {
   connectionId: string | null
   connectionMet: boolean
   routeId: string | null
+  sidingIndex: number | null // when PARKING/PARKED/RETRIEVING
+  staged: boolean // bereitgestellt-/abstell-task train
   resvKind: 'entry' | 'exit' | null
   resvPlatform: number | null
   resvExitLine: string | null
@@ -46,6 +49,7 @@ export interface StationView {
   id: string
   platforms: (string | null)[]
   platformDisabled: boolean[]
+  sidings: (string | null)[]
   sideDisabled: { W: boolean, E: boolean }
 }
 export interface LinkView { id: string, a: string, b: string, occupant: (string | null)[] }
@@ -82,6 +86,8 @@ export type ClientMessage =
   | { t: 'releaseStation', station: string }
   | { t: 'setEntry', trainId: string, platform: number }
   | { t: 'setExit', trainId: string, exitLine: string }
+  | { t: 'park', trainId: string, siding: number }
+  | { t: 'retrieve', trainId: string, platform: number }
   | { t: 'cancelResv', trainId: string }
   | { t: 'start' }
   | { t: 'restart' }

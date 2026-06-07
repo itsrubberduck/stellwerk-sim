@@ -25,10 +25,16 @@ function alongPoly(poly: Pt[], t: number): Pt {
   for (let i = 0; i < seg.length; i++) { if (tg <= seg[i]!) { const f = seg[i]! ? tg / seg[i]! : 0; return { x: poly[i]!.x + (poly[i + 1]!.x - poly[i]!.x) * f, y: poly[i]!.y + (poly[i + 1]!.y - poly[i]!.y) * f } } tg -= seg[i]! }
   return poly[poly.length - 1]!
 }
+function parkPoly(pf: { centerX: number, y: number }, sd: { centerX: number, y: number }): Pt[] { return [{ x: pf.centerX, y: pf.y }, { x: sd.centerX, y: (pf.y + sd.y) / 2 }, { x: sd.centerX, y: sd.y }] }
 function trainPos(t: TrainView): Pt | null {
   const L = props.layout
   if (t.state === 'APPROACH') { const ln = L.lines.find(l => l.id === t.arrLine); if (!ln) return null; return { x: ln.side === 'W' ? ln.edgeX + 42 : ln.edgeX - 42, y: ln.arrY } }
   if (t.state === 'ENTERING' || t.state === 'EXITING' || t.state === 'STUCK') { const r = t.routeId ? L.byId(t.routeId) : undefined; if (r) return alongPoly(r.poly, t.progress) }
+  if (t.state === 'PARKED' && t.sidingIndex != null) { const sd = L.sidings[t.sidingIndex - 1]; if (sd) return { x: sd.centerX, y: sd.y } }
+  if ((t.state === 'PARKING' || t.state === 'RETRIEVING') && t.platform != null && t.sidingIndex != null) {
+    const pf = L.platforms[t.platform - 1], sd = L.sidings[t.sidingIndex - 1]
+    if (pf && sd) { const poly = parkPoly(pf, sd); return alongPoly(t.state === 'PARKING' ? poly : [...poly].reverse(), t.progress) }
+  }
   if (t.platform != null) { const pf = L.platforms[t.platform - 1]; if (pf) return { x: pf.centerX, y: pf.y } }
   return null
 }
@@ -58,12 +64,23 @@ function draw() {
     diamond(ctx, { x: ln.stubX, y: ln.y }, 5, '#7a8590')
     if (!props.compact) text(ctx, ln.label.toUpperCase(), ln.side === 'W' ? ln.edgeX + 6 : ln.edgeX - 6, ln.edgeY - 22, '#6b7682', 18, ln.side === 'W' ? 'left' : 'right')
   }
-  // platforms
+  // platforms: thin running line (full span) + thicker platform edge (variable length)
   for (const pf of L.platforms) {
-    line(ctx, { x: pf.leftX, y: pf.y }, { x: pf.rightX, y: pf.y }, '#5a636e', 6)
-    if (snap.platformDisabled[pf.index - 1]) hatch(ctx, pf.leftX, pf.rightX, pf.y)
+    line(ctx, { x: pf.leftX, y: pf.y }, { x: pf.rightX, y: pf.y }, '#3c454e', 3)
+    const bl = pf.barL ?? pf.leftX, br = pf.barR ?? pf.rightX
+    line(ctx, { x: bl, y: pf.y }, { x: br, y: pf.y }, '#6b7682', 8)
+    if (snap.platformDisabled[pf.index - 1]) hatch(ctx, bl, br, pf.y)
     text(ctx, `Gl ${pf.index}`, pf.leftX - 14, pf.y - 9, '#8b97a3', 21, 'right')
     const m = PLATFORM_CLASS_META[pf.cls]; text(ctx, m.tag, pf.leftX - 14, pf.y + 11, m.color, 15, 'right')
+  }
+
+  // sidings (Abstellgleise)
+  for (const sd of L.sidings) {
+    line(ctx, { x: sd.leftX, y: sd.y }, { x: sd.rightX, y: sd.y }, '#4a5560', 6)
+    buffer(ctx, sd.rightX, sd.y); buffer(ctx, sd.leftX, sd.y)
+    text(ctx, `Abst ${sd.index}`, sd.leftX - 12, sd.y, '#6b7682', 15, 'right')
+    const occ = inStation.find(t => t.sidingIndex === sd.index && t.state === 'PARKED')
+    if (occ) line(ctx, { x: sd.leftX + 12, y: sd.y }, { x: sd.rightX - 12, y: sd.y }, '#7a6cff', 14)
   }
 
   // planned (soll/ist) route for hovered/selected train (cyan)
@@ -93,13 +110,23 @@ function draw() {
     for (let i = 0; i < r.poly.length - 1; i++) line(ctx, r.poly[i]!, r.poly[i + 1]!, col, 7)
   }
 
-  // platform occupancy
+  // park / retrieve moves (dotted violet)
+  ctx.setLineDash([4, 6])
+  for (const t of inStation) {
+    if ((t.state !== 'PARKING' && t.state !== 'RETRIEVING') || t.platform == null || t.sidingIndex == null) continue
+    const pf = L.platforms[t.platform - 1], sd = L.sidings[t.sidingIndex - 1]; if (!pf || !sd) continue
+    const poly = parkPoly(pf, sd); for (let i = 0; i < poly.length - 1; i++) line(ctx, poly[i]!, poly[i + 1]!, '#7a6cff', 3)
+  }
+  ctx.setLineDash([])
+
+  // platform occupancy (within the platform edge)
   for (const pf of L.platforms) {
     const occ = inStation.find(t => t.platform === pf.index && (t.state === 'DWELL' || t.state === 'READY_DEPART' || t.state === 'STUCK'))
     if (!occ) continue
     const ready = occ.state === 'READY_DEPART'
     const color = occ.state === 'STUCK' ? '#ff3b30' : ready ? '#ffb020' : '#ff3b30'
-    line(ctx, { x: pf.leftX + 14, y: pf.y }, { x: pf.rightX - 14, y: pf.y }, color, 16)
+    const bl = pf.barL ?? pf.leftX, br = pf.barR ?? pf.rightX
+    line(ctx, { x: bl + 6, y: pf.y }, { x: br - 6, y: pf.y }, color, 16)
   }
 
   // train markers + labels
