@@ -12,6 +12,12 @@ interface Peerish {
   send: (data: string) => void
 }
 
+// A peer socket can be reset between ticks; guard every send so one dead
+// connection can't take down the whole room (and the dev server with it).
+function safeSend(peer: Peerish, data: string) {
+  try { peer.send(data) } catch { /* peer gone; close handler will clean up */ }
+}
+
 class Room {
   engine: GameEngine
   peers = new Map<Peerish, PeerMeta>()
@@ -41,11 +47,11 @@ class Room {
     this.engine.tick(dt)
     const snap: ServerMessage = { t: 'snapshot', state: this.engine.snapshot() }
     const payload = JSON.stringify(snap)
-    for (const peer of this.peers.keys()) peer.send(payload)
+    for (const peer of this.peers.keys()) safeSend(peer, payload)
     for (const toast of this.engine.drainToasts()) {
       const msg: ServerMessage = { t: 'toast', ...toast }
       const p = JSON.stringify(msg)
-      for (const peer of this.peers.keys()) peer.send(p)
+      for (const peer of this.peers.keys()) safeSend(peer, p)
     }
   }
 
@@ -68,10 +74,10 @@ class Room {
 
   private sendSnapshot(peer: Peerish) {
     const snap: ServerMessage = { t: 'snapshot', state: this.engine.snapshot() }
-    peer.send(JSON.stringify(snap))
+    safeSend(peer, JSON.stringify(snap))
   }
 
-  private send(peer: Peerish, msg: ServerMessage) { peer.send(JSON.stringify(msg)) }
+  private send(peer: Peerish, msg: ServerMessage) { safeSend(peer, JSON.stringify(msg)) }
 
   handle(peer: Peerish, raw: string) {
     let msg: ClientMessage

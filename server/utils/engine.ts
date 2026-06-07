@@ -435,7 +435,7 @@ export class GameEngine {
     if (!t || t.state !== 'APPROACH' || !t.arrLink || !t.station) return false
     const lk = this.links.get(t.arrLink.linkId)
     if (!lk) return false
-    const neighborId = lk.a === t.station ? lk.b : lk.a
+    const neighborId = lk.def.a === t.station ? lk.def.b : lk.def.a
     const newDir: 'E' | 'W' = t.dir === 'E' ? 'W' : 'E'
     const newArrLine = flipLine(t.arrLine)
     if (this.lineHasApproach(neighborId, newArrLine)) return false
