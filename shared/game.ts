@@ -20,10 +20,10 @@ export type AvatarId = 'domi' | 'eli' | 'ema' | 'jan' | 'leo'
 export interface AvatarProfile { id: AvatarId, name: string, image: string, color: string }
 export const AVATARS: AvatarProfile[] = [
   { id: 'domi', name: 'Domi', image: '/img/domi.png', color: '#24a8ff' },
-  { id: 'eli', name: 'Eli', image: '/img/eli.png', color: '#ff5b68' },
-  { id: 'ema', name: 'Ema', image: '/img/ema.png', color: '#ff9f2f' },
-  { id: 'jan', name: 'Jan', image: '/img/jan.png', color: '#9d72ff' },
-  { id: 'leo', name: 'Leo', image: '/img/leo.png', color: '#42d980' }
+  { id: 'eli', name: 'Eli', image: '/img/eli.png', color: '#ffd23b' },
+  { id: 'ema', name: 'Ema', image: '/img/ema.png', color: '#42d980' },
+  { id: 'jan', name: 'Jan', image: '/img/jan.png', color: '#ff5b68' },
+  { id: 'leo', name: 'Leo', image: '/img/leo.png', color: '#9d72ff' }
 ]
 export const avatarProfile = (id: string | null | undefined) => AVATARS.find(a => a.id === id) ?? AVATARS[0]!
 

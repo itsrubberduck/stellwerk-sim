@@ -75,10 +75,16 @@ class Room {
         break
       case 'helloPlayer': {
         meta.role = 'player'
+        const previousId = meta.playerId
         const id = msg.playerId || `p${Math.random().toString(36).slice(2, 8)}`
-        meta.playerId = id
-        e.addPlayer(id, msg.avatarId)
-        this.send(peer, { t: 'welcome', playerId: id })
+        const player = e.addPlayer(id, msg.avatarId)
+        meta.playerId = player.id
+        for (const oldId of new Set([previousId, id])) {
+          if (!oldId || oldId === player.id) continue
+          const oldPlayerStillHere = [...this.peers.entries()].some(([p, m]) => p !== peer && m.playerId === oldId)
+          if (!oldPlayerStillHere) e.setPlayerConnected(oldId, false)
+        }
+        this.send(peer, { t: 'welcome', playerId: player.id })
         break
       }
       case 'claimStation':

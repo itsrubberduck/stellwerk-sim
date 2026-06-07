@@ -26,9 +26,8 @@ const stationTaken = (sid: string) => {
   return !!owner?.connected && owner.id !== playerId.value
 }
 const selectedAvatar = computed(() => chosenAvatar.value ?? me.value?.avatarId ?? null)
-const avatarTaken = (avatarId: AvatarId) => s.value?.players.some(p => p.id !== playerId.value && p.connected && p.avatarId === avatarId) ?? false
 
-function chooseAvatar(avatarId: AvatarId) { if (!avatarTaken(avatarId)) { chosenAvatar.value = avatarId; setPlayerAvatar(avatarId) } }
+function chooseAvatar(avatarId: AvatarId) { chosenAvatar.value = avatarId; setPlayerAvatar(avatarId) }
 function claim(sid: string) { sendMsg({ t: 'claimStation', station: sid }) }
 function openPanel() { view.value = 'panel' }
 
@@ -140,11 +139,9 @@ const menuPos = computed(() => sel.value ? { left: Math.min(sel.value.x, (typeof
       <div class="muted small mt">Wähle dein Profil:</div>
       <div class="avatar-grid">
         <button v-for="avatar in AVATARS" :key="avatar.id" class="avatar-choice"
-          :class="{ selected: selectedAvatar === avatar.id, taken: avatarTaken(avatar.id) }"
-          :disabled="avatarTaken(avatar.id)" @click="chooseAvatar(avatar.id)">
+          :class="{ selected: selectedAvatar === avatar.id }" @click="chooseAvatar(avatar.id)">
           <PlayerAvatar :avatar-id="avatar.id" :size="76" />
           <b>{{ avatar.name }}</b>
-          <span v-if="avatarTaken(avatar.id)">belegt</span>
         </button>
       </div>
       <div class="muted small mt">Wähle dein Stellwerk:</div>
@@ -295,7 +292,6 @@ const menuPos = computed(() => sel.value ? { left: Math.min(sel.value.x, (typeof
 .avatar-choice { display: flex; flex-direction: column; align-items: center; gap: 3px; min-width: 0; padding: 8px 5px; border: 2px solid var(--grid); background: var(--panel-2); color: var(--text); cursor: pointer; }
 .avatar-choice b { font-size: 14px; }.avatar-choice span { color: var(--muted); font-size: 10px; }
 .avatar-choice.selected { border-color: var(--accent); background: #2a2410; box-shadow: inset 0 0 0 1px var(--accent); }
-.avatar-choice.taken { opacity: 0.35; cursor: not-allowed; }
 .st-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
 .st { display: flex; flex-direction: row; align-items: center; gap: 10px; padding: 12px 16px; text-transform: none; }
 .st-text { display: flex; flex-direction: column; align-items: flex-start; gap: 4px; }

@@ -158,14 +158,25 @@ export class GameEngine {
   addPlayer(id: string, requestedAvatar?: string): Player {
     let p = this.players.get(id)
     const requested = AVATARS.find(a => a.id === requestedAvatar)
-    const avatarTaken = (avatarId: AvatarId) => [...this.players.values()].some(o => o.id !== id && o.connected && o.avatarId === avatarId)
+    const profilePlayer = requested
+      ? [...this.players.values()].find(o => o.id !== id && o.avatarId === requested.id)
+      : undefined
+
+    // The avatar is the visible player identity. Reuse it when a browser lost
+    // its local player id instead of leaving the profile permanently occupied.
+    if (profilePlayer) {
+      profilePlayer.connected = true
+      profilePlayer.name = requested!.name
+      return profilePlayer
+    }
+
     if (!p) {
-      const avatar = requested && !avatarTaken(requested.id) ? requested : (AVATARS.find(a => !avatarTaken(a.id)) ?? AVATARS[0]!)
+      const avatar = requested ?? (AVATARS.find(a => ![...this.players.values()].some(o => o.avatarId === a.id)) ?? AVATARS[0]!)
       p = { id, name: avatar.name, avatarId: avatar.id, station: null, connected: true }
       this.players.set(id, p)
     } else {
       p.connected = true
-      if (requested && !avatarTaken(requested.id)) { p.avatarId = requested.id; p.name = requested.name }
+      if (requested) { p.avatarId = requested.id; p.name = requested.name }
       else p.name = avatarProfile(p.avatarId).name
     }
     return p
