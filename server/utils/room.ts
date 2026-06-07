@@ -108,6 +108,9 @@ class Room {
       case 'setNetwork':
         e.setNetwork(msg.count)
         break
+      case 'setStationType':
+        e.setStationType(msg.index, msg.kind)
+        break
     }
     this.sendSnapshot(peer)
   }

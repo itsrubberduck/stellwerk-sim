@@ -3,7 +3,10 @@ import { computed, ref, watch } from 'vue'
 import QRCode from 'qrcode'
 import { useGame, sendMsg } from '../composables/useGame'
 import { PHASE_LABEL, type TrainView } from '../../shared/game'
-import { generateNetwork } from '../../shared/network'
+import { CORRIDOR_KIND_LABEL } from '../../shared/layout'
+import { generateNetwork, type StationKind } from '../../shared/network'
+
+const THROUGH_KINDS: StationKind[] = ['DURCHGANG', 'KNOTEN', 'ABZWEIG', 'GROSS']
 
 const { snapshot, connected, toasts } = useGame('screen')
 
@@ -16,8 +19,13 @@ watch(() => snapshot.value?.roomCode, async (code) => {
 
 const s = computed(() => snapshot.value)
 const phase = computed(() => s.value?.phase ?? 'LOBBY')
-const net = computed(() => generateNetwork(s.value?.netCount ?? 2))
+const net = computed(() => generateNetwork(s.value?.netCount ?? 2, (s.value?.netTypes as StationKind[] | undefined)))
 const stations = computed(() => net.value.stations)
+const kindsFor = (i: number): StationKind[] => {
+  const isEnd = i === 0 || i === (s.value?.netCount ?? 2) - 1
+  return isEnd && (s.value?.netCount ?? 2) > 1 ? [...THROUGH_KINDS, 'KOPF'] : THROUGH_KINDS
+}
+function setType(i: number, kind: StationKind) { sendMsg({ t: 'setStationType', index: i, kind }) }
 const fmtTime = (sec: number) => `${Math.floor(sec / 60)}:${String(sec % 60).padStart(2, '0')}`
 const ownerOf = (sid: string) => s.value?.players.find(p => p.station === sid)
 const stationView = (sid: string) => s.value?.stations.find(st => st.id === sid)
@@ -61,9 +69,10 @@ function setCount(n: number) { sendMsg({ t: 'setNetwork', count: n }) }
         <div class="muted small label">Stellwerke &amp; Besetzung</div>
         <div class="st-list">
           <div v-for="(st, i) in stations" :key="st.id" class="st-row" :class="{ taken: !!ownerOf(st.id) }">
-            <div class="st-name">{{ st.name }}</div>
-            <div class="st-sub muted">{{ i === 0 ? 'Westportal' : '' }}{{ i === stations.length-1 ? (i===0?' + Ostportal':'Ostportal') : '' }}{{ i>0 && i<stations.length-1 ? 'Durchgangs-Stellwerk' : '' }}</div>
-            <div class="st-owner">{{ ownerOf(st.id)?.name ?? 'frei' }}</div>
+            <div class="st-top"><div class="st-name">{{ st.name }}</div><div class="st-owner">{{ ownerOf(st.id)?.name ?? 'frei' }}</div></div>
+            <div class="type-chips">
+              <button v-for="k in kindsFor(i)" :key="k" class="key chip" :class="{ on: st.kind === k }" @click="setType(i, k)">{{ CORRIDOR_KIND_LABEL[k] }}</button>
+            </div>
           </div>
         </div>
       </div>
@@ -85,7 +94,7 @@ function setCount(n: number) { sendMsg({ t: 'setNetwork', count: n }) }
       <div class="corridor">
         <template v-for="(st, i) in stations" :key="st.id">
           <div class="st-panel">
-            <div class="st-head"><b>{{ st.name }}</b><span class="muted">{{ ownerOf(st.id)?.name ?? 'unbesetzt' }}</span></div>
+            <div class="st-head"><b>{{ st.name }}</b><span class="muted">{{ CORRIDOR_KIND_LABEL[st.kind] }} · {{ ownerOf(st.id)?.name ?? 'unbesetzt' }}</span></div>
             <div class="st-canvas">
               <StationCanvas v-if="stationView(st.id)" :layout="st.layout" :station="stationView(st.id)!" :trains="trainsIn(st.id)" compact />
             </div>
@@ -126,8 +135,12 @@ function setCount(n: number) { sendMsg({ t: 'setNetwork', count: n }) }
 .st-list { display: flex; flex-direction: column; gap: 10px; }
 .st-row { background: var(--panel-2); border: 2px solid var(--grid); border-left-width: 5px; padding: 12px; }
 .st-row.taken { border-color: var(--green); }
-.st-name { font-size: 20px; font-weight: 800; } .st-sub { font-size: 12px; }
-.st-owner { margin-top: 6px; color: var(--accent); font-weight: 700; }
+.st-top { display: flex; justify-content: space-between; align-items: baseline; }
+.st-name { font-size: 18px; font-weight: 800; }
+.st-owner { color: var(--accent); font-weight: 700; font-size: 13px; }
+.type-chips { display: flex; gap: 6px; margin-top: 8px; flex-wrap: wrap; }
+.chip { padding: 7px 10px; font-size: 12px; text-transform: none; letter-spacing: 0; }
+.chip.on { border-color: var(--accent); background: #2a2410; color: var(--accent); }
 
 .game { flex: 1; display: flex; flex-direction: column; min-height: 0; position: relative; }
 .hud { display: flex; align-items: center; gap: 22px; padding: 10px 22px; background: var(--panel); border-bottom: 2px solid var(--grid); flex-wrap: wrap; }

@@ -53,6 +53,7 @@ export interface PlayerView { id: string, name: string, station: string | null, 
 
 export interface GameSnapshot {
   netCount: number
+  netTypes: string[]
   phase: Phase
   elapsed: number
   stations: StationView[]
@@ -86,6 +87,7 @@ export type ClientMessage =
   | { t: 'restart' }
   | { t: 'setSolo', solo: boolean }
   | { t: 'setNetwork', count: number }
+  | { t: 'setStationType', index: number, kind: string }
 
 // ---- Server -> Client ----
 export type ServerMessage =

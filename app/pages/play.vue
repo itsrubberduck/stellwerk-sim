@@ -3,7 +3,7 @@ import { computed, onMounted, ref } from 'vue'
 import { useGame, sendMsg, setPlayerName } from '../composables/useGame'
 import { PHASE_LABEL, TRAIN_KINDS, type TrainView } from '../../shared/game'
 import { PLATFORM_CLASS_META, kindAllowed, type Side } from '../../shared/layout'
-import { generateNetwork } from '../../shared/network'
+import { generateNetwork, type StationKind } from '../../shared/network'
 
 const { snapshot, connected, playerId, toasts } = useGame('player')
 const name = ref(''); const view = ref<'setup' | 'panel'>('setup')
@@ -13,7 +13,7 @@ const hoverId = ref<string | null>(null)
 onMounted(() => { try { name.value = localStorage.getItem('swk_name') || '' } catch {} })
 
 const s = computed(() => snapshot.value)
-const net = computed(() => generateNetwork(s.value?.netCount ?? 2))
+const net = computed(() => generateNetwork(s.value?.netCount ?? 2, (s.value?.netTypes as StationKind[] | undefined)))
 const me = computed(() => s.value?.players.find(p => p.id === playerId.value))
 const myStationId = computed(() => s.value?.soloMode ? (tab.value ?? net.value.stations[0]?.id ?? null) : (me.value?.station ?? null))
 const myStation = computed(() => net.value.stations.find(st => st.id === myStationId.value) ?? null)

@@ -185,6 +185,46 @@ function finish(preset: Preset, name: string, type: StationType, sides: Side[], 
   }
 }
 
+// ---- corridor station types (selectable per station) ----
+export type CorridorKind = 'DURCHGANG' | 'KNOTEN' | 'ABZWEIG' | 'GROSS'
+const KIND_CONF: Record<CorridorKind, { p: number, classes: PlatformClass[] }> = {
+  DURCHGANG: { p: 5, classes: ['LANG', 'LANG', 'LANG', 'KURZ', 'GUETER'] },
+  KNOTEN: { p: 6, classes: ['LANG', 'LANG', 'LANG', 'LANG', 'KURZ', 'GUETER'] },
+  ABZWEIG: { p: 6, classes: ['LANG', 'LANG', 'LANG', 'LANG', 'KURZ', 'GUETER'] },
+  GROSS: { p: 8, classes: ['LANG', 'LANG', 'LANG', 'LANG', 'LANG', 'KURZ', 'KURZ', 'GUETER'] }
+}
+export const CORRIDOR_KIND_LABEL: Record<string, string> = {
+  DURCHGANG: 'Durchgang', KNOTEN: 'Knoten', ABZWEIG: 'Abzweig', GROSS: 'Großbf', KOPF: 'Kopfbahnhof'
+}
+
+export function buildCorridorStation(name: string, kind: CorridorKind, wCount: number, eCount: number): Layout {
+  const conf = KIND_CONF[kind]
+  const lines: LineDef[] = []
+  for (let i = 0; i < wCount; i++) { const y = spread(wCount, LINE_TOP, LINE_BOT, i); lines.push(mkLine(`W${i + 1}`, 'W', `West ${i + 1}`, i, y, y)) }
+  for (let j = 0; j < eCount; j++) { const y = spread(eCount, LINE_TOP, LINE_BOT, j); lines.push(mkLine(`E${j + 1}`, 'E', `Ost ${j + 1}`, j, y, y)) }
+  const platforms: PlatformDef[] = []
+  for (let k = 0; k < conf.p; k++) platforms.push({ index: k + 1, y: spread(conf.p, PLAT_TOP, PLAT_BOT, k), leftX: PL, rightX: PR, centerX: CENTER, cls: conf.classes[k] ?? 'LANG', openL: true, openR: true })
+  const reach = (l: LineDef, pf: PlatformDef) => {
+    const n = l.side === 'W' ? wCount : eCount
+    const tp = norm(n, l.index), pp = norm(conf.p, pf.index - 1)
+    if (kind === 'DURCHGANG') return Math.abs(tp - pp) <= 0.95
+    if (kind === 'ABZWEIG') return tp < 0.5 ? pp <= 0.6 : pp >= 0.4
+    return Math.abs(tp - pp) <= 0.5
+  }
+  return finish('KNOTEN', name, 'THROUGH', ['W', 'E'], lines, platforms, reach)
+}
+
+export function buildCorridorTerminus(name: string, linkSide: Side, linkCount: number): Layout {
+  const classes: PlatformClass[] = ['LANG', 'LANG', 'LANG', 'LANG', 'KURZ', 'GUETER']
+  const p = classes.length
+  const lines: LineDef[] = []
+  for (let i = 0; i < linkCount; i++) { const y = spread(linkCount, LINE_TOP, LINE_BOT, i); lines.push(mkLine(`${linkSide}${i + 1}`, linkSide, `Gleis ${i + 1}`, i, y, y)) }
+  const platforms: PlatformDef[] = []
+  for (let k = 0; k < p; k++) platforms.push({ index: k + 1, y: spread(p, PLAT_TOP, PLAT_BOT, k), leftX: PL, rightX: PR, centerX: CENTER, cls: classes[k] ?? 'LANG', openL: linkSide === 'W', openR: linkSide === 'E' })
+  const reach = (l: LineDef, pf: PlatformDef) => Math.abs(norm(linkCount, l.index) - norm(p, pf.index - 1)) <= 0.6
+  return finish('KNOTEN', name, 'TERMINUS', [linkSide], lines, platforms, reach)
+}
+
 // Build a through-station layout with explicit side line counts — used by the
 // network/corridor (e.g. 2 portal tracks on one side, 4 link tracks on the other).
 export function buildThrough(name: string, w: number, e: number, p: number, window: number, classes: PlatformClass[]): Layout {
