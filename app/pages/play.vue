@@ -108,6 +108,12 @@ function platformLabel(row: TimetableEntry) {
   if (row.platformStatus === 'RESERVED') return `Gl ${platform} vorg.`
   return `Gl ${platform} Soll`
 }
+function hoverTimetable(row: TimetableEntry) {
+  hoverId.value = row.trainId && myTrains.value.some(t => t.id === row.trainId) ? row.trainId : null
+}
+function leaveTimetable(row: TimetableEntry) {
+  if (hoverId.value === row.trainId) hoverId.value = null
+}
 const menuPos = computed(() => sel.value ? { left: Math.min(sel.value.x, (typeof window !== 'undefined' ? window.innerWidth : 1000) - 280) + 'px', top: Math.min(sel.value.y, (typeof window !== 'undefined' ? window.innerHeight : 800) - 320) + 'px' } : {})
 </script>
 
@@ -226,7 +232,9 @@ const menuPos = computed(() => sel.value ? { left: Math.min(sel.value.x, (typeof
           </div>
           <div class="tt-cols"><span>Zeit</span><span>Zug · Ziel</span><span>Gleis</span></div>
           <div class="tt-list">
-            <div v-for="row in timetable" :key="row.id" class="tt-row" :class="{ uncertain: row.estimatedTime == null }">
+            <div v-for="row in timetable" :key="row.id" class="tt-row"
+              :class="{ uncertain: row.estimatedTime == null, highlighted: row.trainId != null && row.trainId === hoverId }"
+              @pointerenter="hoverTimetable(row)" @pointerleave="leaveTimetable(row)">
               <div class="tt-time mono">
                 <b>{{ row.estimatedTime == null ? 'offen' : fmtTime(row.estimatedTime) }}</b>
                 <span v-if="row.estimatedTime != null && rowDelay(row)! >= 5" class="late">+{{ rowDelay(row) }}s</span>
@@ -300,8 +308,9 @@ const menuPos = computed(() => sel.value ? { left: Math.min(sel.value.x, (typeof
 .tt-cols { display: grid; grid-template-columns: 70px minmax(0, 1fr) 74px; gap: 8px; padding: 7px 10px; color: var(--muted); border-bottom: 1px solid var(--grid); font-size: 10px; text-transform: uppercase; letter-spacing: 0.08em; }
 .tt-cols span:last-child { text-align: right; }
 .tt-list { flex: 1; min-height: 0; overflow-y: auto; }
-.tt-row { display: grid; grid-template-columns: 70px minmax(0, 1fr) 74px; gap: 8px; align-items: start; padding: 10px; border-bottom: 1px solid #242c34; }
+.tt-row { display: grid; grid-template-columns: 70px minmax(0, 1fr) 74px; gap: 8px; align-items: start; padding: 10px; border-bottom: 1px solid #242c34; transition: background 0.08s, box-shadow 0.08s; }
 .tt-row.uncertain { background: #211b13; }
+.tt-row:hover, .tt-row.highlighted { background: #12303a; box-shadow: inset 4px 0 #36d6ff; }
 .tt-time { display: flex; flex-direction: column; gap: 3px; }
 .tt-time b { font-size: 16px; }
 .tt-time span { font-size: 10px; color: var(--muted); }

@@ -209,9 +209,18 @@ export class GameEngine {
   private genSpec(): Spec {
     for (;;) {
       const r = Math.random()
-      const kind: TrainKind = r < 0.16 ? 'SPRINTER' : r < 0.58 ? 'ICE' : r < 0.82 ? 'IC' : 'FREIGHT'
+      const kind: TrainKind =
+        r < 0.14 ? 'SPRINTER'
+          : r < 0.52 ? 'ICE'
+            : r < 0.72 ? 'IC'
+              : r < 0.90 ? 'FREIGHT'
+                : r < 0.92 ? 'TGV'
+                  : r < 0.94 ? 'CD'
+                    : r < 0.97 ? 'SBAHN'
+                      : r < 0.985 ? 'V60'
+                        : 'V100'
       const dir: 'E' | 'W' = Math.random() < 0.5 ? 'E' : 'W'
-      const staged = this.phase !== 'RUHE' && Math.random() < 0.16
+      const staged = this.phase !== 'RUHE' && (kind === 'V60' || kind === 'V100' ? Math.random() < 0.55 : Math.random() < 0.16)
       const built = this.buildSoll(kind, dir, staged)
       if (built) return { id: uid('f'), number: this.genNumber(kind), kind, dir, staged, soll: built.soll, firstLine: built.firstLine, originTerminus: built.originTerminus }
     }
@@ -220,6 +229,11 @@ export class GameEngine {
     if (kind === 'SPRINTER') return `ICE ${1000 + Math.floor(Math.random() * 99)}`
     if (kind === 'ICE') return `ICE ${100 + Math.floor(Math.random() * 899)}`
     if (kind === 'IC') return `IC ${2000 + Math.floor(Math.random() * 900)}`
+    if (kind === 'TGV') return `TGV ${9500 + Math.floor(Math.random() * 300)}`
+    if (kind === 'CD') return `ČD ${170 + Math.floor(Math.random() * 80)}`
+    if (kind === 'SBAHN') return `S${1 + Math.floor(Math.random() * 9)} ${Math.floor(Math.random() * 90) + 10}`
+    if (kind === 'V60') return `V60 ${300 + Math.floor(Math.random() * 80)}`
+    if (kind === 'V100') return `V100 ${100 + Math.floor(Math.random() * 120)}`
     return `GZ ${40000 + Math.floor(Math.random() * 9000)}`
   }
 

@@ -17,8 +17,8 @@ export const PLATFORM_CLASS_META: Record<PlatformClass, { tag: string, label: st
 }
 
 export function kindAllowed(kind: string, cls: PlatformClass): boolean {
-  if (kind === 'SPRINTER' || kind === 'ICE') return cls === 'LANG'
-  if (kind === 'IC') return true
+  if (kind === 'SPRINTER' || kind === 'ICE' || kind === 'TGV' || kind === 'CD') return cls === 'LANG'
+  if (kind === 'IC' || kind === 'SBAHN' || kind === 'V60' || kind === 'V100') return true
   if (kind === 'FREIGHT') return cls === 'KURZ' || cls === 'GUETER'
   return true
 }

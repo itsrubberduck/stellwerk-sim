@@ -1,12 +1,19 @@
 // Shared types & messages for the ICE-Stellwerk corridor (multi-station network).
 
-export type TrainKind = 'SPRINTER' | 'ICE' | 'IC' | 'FREIGHT'
+export type TrainKind =
+  | 'SPRINTER' | 'ICE' | 'IC' | 'FREIGHT'
+  | 'TGV' | 'CD' | 'SBAHN' | 'V60' | 'V100'
 export interface TrainKindMeta { label: string, weight: number, color: string }
 export const TRAIN_KINDS: Record<TrainKind, TrainKindMeta> = {
   SPRINTER: { label: 'ICE-Sprinter', weight: 3, color: '#ff3b3b' },
   ICE: { label: 'ICE', weight: 2, color: '#ffd23b' },
   IC: { label: 'IC', weight: 1, color: '#3bd1ff' },
-  FREIGHT: { label: 'Güterzug', weight: 0.5, color: '#9aa3ad' }
+  FREIGHT: { label: 'Güterzug', weight: 0.5, color: '#9aa3ad' },
+  TGV: { label: 'TGV', weight: 2.5, color: '#8d7cff' },
+  CD: { label: 'ČD-EuroCity', weight: 1.5, color: '#3f8cff' },
+  SBAHN: { label: 'S-Bahn', weight: 0.8, color: '#48d17a' },
+  V60: { label: 'Rangierlok V60', weight: 0.3, color: '#d84a3a' },
+  V100: { label: 'Diesellok V100', weight: 0.4, color: '#b93232' }
 }
 
 export type TrainState =
