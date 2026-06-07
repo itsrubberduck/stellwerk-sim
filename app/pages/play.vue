@@ -60,6 +60,12 @@ function onTrainClick(p: { id: string, x: number, y: number }) { sel.value = p }
 function reserveEntry(t: TrainView, p: number) { if (canEntry(t, p)) sendMsg({ t: 'setEntry', trainId: t.id, platform: p }) }
 function reserveExit(t: TrainView, line: string) { sendMsg({ t: 'setExit', trainId: t.id, exitLine: line }) }
 function cancel(t: TrainView) { sendMsg({ t: 'cancelResv', trainId: t.id }) }
+function sendBack(t: TrainView) { sendMsg({ t: 'sendBack', trainId: t.id }); sel.value = null }
+function canSendBack(t: TrainView): boolean {
+  if (t.state !== 'APPROACH' || !myStation.value) return false
+  const side = t.arrLine.startsWith('W') ? 'W' : 'E'
+  return (side === 'W' ? myStation.value.west : myStation.value.east).kind === 'LINK'
+}
 const sidings = computed(() => myLayout.value?.sidings ?? [])
 function sidingFree(i: number) { return !!stationView.value && stationView.value.sidings[i - 1] == null }
 function park(t: TrainView, sd: number) { sendMsg({ t: 'park', trainId: t.id, siding: sd }) }
@@ -207,6 +213,7 @@ const menuPos = computed(() => sel.value ? { left: Math.min(sel.value.x, (typeof
                   Gl {{ pf.index }} <span class="tag" :style="{ color: PLATFORM_CLASS_META[pf.cls].color }">{{ PLATFORM_CLASS_META[pf.cls].tag }}</span>
                 </button>
               </div>
+              <button v-if="canSendBack(selTrain)" class="key opt wide back-btn" @click="sendBack(selTrain)">◀ Zurückschicken</button>
             </template>
 
             <!-- exit: pick line / hand-over track + park -->
@@ -322,6 +329,7 @@ const menuPos = computed(() => sel.value ? { left: Math.min(sel.value.x, (typeof
 .opt.soll { border-color: var(--accent); box-shadow: inset 0 0 0 1px var(--accent); }
 .opt.occ { opacity: 0.9; } .opt.bad { opacity: 0.35; }
 .opt.park { border-color: #5a4fb0; color: #cfc8ff; }
+.back-btn { margin-top: 6px; border-color: var(--amber); color: #ffe6b0; letter-spacing: 0; text-transform: none; }
 .resv { display: flex; align-items: center; gap: 8px; margin-top: 8px; background: #2a2410; border: 2px dashed var(--amber); padding: 10px; font-size: 13px; color: #ffe6b0; }
 .resv .sm { margin-left: auto; padding: 8px 10px; }
 

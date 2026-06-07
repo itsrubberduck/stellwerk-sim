@@ -278,7 +278,7 @@ export function buildCorridorStation(name: string, kind: CorridorKind, wCount: n
       const n = l.side === 'W' ? wCount : eCount
       return Math.abs(norm(n, l.index) - norm(3, p.index - 1)) <= 0.75
     }
-    return finish('KNOTEN', name, 'THROUGH', ['W', 'E'], lines, platforms, reach)
+    return finish('KNOTEN', name, 'THROUGH', ['W', 'E'], lines, platforms, reach, corridorSidings())
   }
 
   // --- Standard kinds: DURCHGANG / KNOTEN / ABZWEIG / GROSS ---

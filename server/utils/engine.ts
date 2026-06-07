@@ -411,10 +411,11 @@ export class GameEngine {
     if (s.platforms[idx] || s.platformDisabled[idx]) return
     const route = s.layout.entry(t.arrLine, platform); if (!route || this.throatBusy(s, route)) return
     s.platforms[idx] = t.id; t.platform = platform
-    if (platform !== t.soll[s.def.id]!.platform) { t.deviated = true }
+    const entryLeg = t.soll[s.def.id]
+    if (entryLeg && platform !== entryLeg.platform) { t.deviated = true }
     if (t.arrLink) { const lk = this.links.get(t.arrLink.linkId); if (lk) lk.occupant[t.arrLink.track - 1] = null; t.arrLink = null }
     t.routeId = route.id; t.state = 'ENTERING'; t.progress = 0; t.resv = null
-    if (!t.exitLine) t.exitLine = t.soll[s.def.id]!.exitLine
+    if (!t.exitLine && entryLeg) t.exitLine = entryLeg.exitLine
   }
   private tryExit(t: Train) {
     if (t.platform == null) return
@@ -424,8 +425,44 @@ export class GameEngine {
     const side = sideOf(exitLine); const role = this.sideRole(s, side)
     if (role.kind === 'LINK') { const lk = this.links.get(role.linkId!)!; if (lk.occupant[lineNum(exitLine) - 1]) return }
     t.exitLine = exitLine
-    if (exitLine !== t.soll[s.def.id]!.exitLine) t.deviated = true
+    const exitLeg = t.soll[s.def.id]
+    if (exitLeg && exitLine !== exitLeg.exitLine) t.deviated = true
     t.routeId = route.id; t.state = 'EXITING'; t.progress = 0; t.resv = null
+  }
+
+  sendBack(trainId: string): boolean {
+    const t = this.trains.find(x => x.id === trainId)
+    if (!t || t.state !== 'APPROACH' || !t.arrLink || !t.station) return false
+    const lk = this.links.get(t.arrLink.linkId)
+    if (!lk) return false
+    const neighborId = lk.a === t.station ? lk.b : lk.a
+    const newDir: 'E' | 'W' = t.dir === 'E' ? 'W' : 'E'
+    const newArrLine = flipLine(t.arrLine)
+    if (this.lineHasApproach(neighborId, newArrLine)) return false
+    const nbDef = this.def(neighborId)
+    const layout = nbDef.layout
+    const fSide = this.forwardSide(newDir)
+    const isEnd = this.roleOf(nbDef, fSide).kind === 'END'
+    const cands = layout.platforms.filter(p =>
+      kindAllowed(t.kind, p.cls) &&
+      !!layout.entry(newArrLine, p.index) &&
+      (isEnd || layout.lines.some(l => l.side === fSide && !!layout.exit(l.id, p.index)))
+    )
+    if (!cands.length) return false
+    const pf = rnd(cands)
+    let exitLine = ''
+    if (!isEnd) {
+      const exits = layout.lines.filter(l => l.side === fSide && !!layout.exit(l.id, pf.index))
+      if (exits.length) exitLine = rnd(exits).id
+    }
+    t.soll[neighborId] = { platform: pf.index, exitLine }
+    t.station = neighborId
+    t.dir = newDir
+    t.arrLine = newArrLine
+    t.deviated = true
+    t.resv = null
+    this.pushToast('info', `${t.number} zurück → ${nbDef.name}`)
+    return true
   }
 
   // ---------- tick ----------
@@ -550,7 +587,8 @@ export class GameEngine {
       const current = order.findIndex(s => s.id === t.station)
       for (let i = current; i < order.length; i++) {
         const station = order[i]!
-        const leg = t.soll[station.id]!
+        const leg = t.soll[station.id]
+        if (!leg) continue // soll may be partial after sendBack
         const schedule = t.schedule[station.id]!
         const event = leg.exitLine ? 'DEPARTURE' : 'ARRIVAL'
         const isCurrent = station.id === t.station

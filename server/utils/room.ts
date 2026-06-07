@@ -119,6 +119,9 @@ class Room {
       case 'cancelResv':
         e.cancelResv(msg.trainId)
         break
+      case 'sendBack':
+        e.sendBack(msg.trainId)
+        break
       case 'start':
         e.start()
         break

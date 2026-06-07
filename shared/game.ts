@@ -131,6 +131,7 @@ export type ClientMessage =
   | { t: 'setSolo', solo: boolean }
   | { t: 'setNetwork', count: number }
   | { t: 'setStationType', index: number, kind: string }
+  | { t: 'sendBack', trainId: string }
 
 // ---- Server -> Client ----
 export type ServerMessage =
