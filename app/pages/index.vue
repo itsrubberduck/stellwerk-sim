@@ -55,7 +55,7 @@ function setCount(n: number) { sendMsg({ t: 'setNetwork', count: n }) }
 
         <div class="muted small label">Stellwerke im Korridor</div>
         <div class="counts">
-          <button v-for="n in [1,2,3,4]" :key="n" class="key cnt" :class="{ on: s?.netCount === n }" @click="setCount(n)">{{ n }}</button>
+          <button v-for="n in [1,2,3,4,5]" :key="n" class="key cnt" :class="{ on: s?.netCount === n }" @click="setCount(n)">{{ n }}</button>
         </div>
 
         <div class="join">
@@ -175,7 +175,7 @@ function setCount(n: number) { sendMsg({ t: 'setNetwork', count: n }) }
 .stat .num.low { color: var(--red); } .stat .lbl { font-size: 11px; color: var(--muted); text-transform: uppercase; letter-spacing: 0.06em; } .spacer { flex: 1; }
 .abort-btn { padding: 9px 12px; font-size: 12px; }
 .crew-strip { display: flex; gap: 8px; padding: 8px 12px; background: #10151a; border-bottom: 1px solid var(--grid); }
-.crew-member { min-width: 150px; display: flex; align-items: center; gap: 8px; padding: 5px 10px; border: 1px solid var(--owner-color); background: color-mix(in srgb, var(--owner-color) 10%, var(--panel)); }
+.crew-member { flex: 1 1 150px; min-width: 0; display: flex; align-items: center; gap: 8px; padding: 5px 10px; border: 1px solid var(--owner-color); background: color-mix(in srgb, var(--owner-color) 10%, var(--panel)); }
 .crew-member > div { display: flex; flex-direction: column; }.crew-member b { font-size: 13px; }.crew-member span { color: var(--owner-color); font-size: 12px; font-weight: 800; }
 .crew-member.vacant { --owner-color: var(--grid); opacity: 0.55; }
 
