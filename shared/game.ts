@@ -16,6 +16,17 @@ export const TRAIN_KINDS: Record<TrainKind, TrainKindMeta> = {
   V100: { label: 'Diesellok V100', weight: 0.4, color: '#b93232' }
 }
 
+export type AvatarId = 'domi' | 'eli' | 'ema' | 'jan' | 'leo'
+export interface AvatarProfile { id: AvatarId, name: string, image: string, color: string }
+export const AVATARS: AvatarProfile[] = [
+  { id: 'domi', name: 'Domi', image: '/img/domi.png', color: '#24a8ff' },
+  { id: 'eli', name: 'Eli', image: '/img/eli.png', color: '#ff5b68' },
+  { id: 'ema', name: 'Ema', image: '/img/ema.png', color: '#ff9f2f' },
+  { id: 'jan', name: 'Jan', image: '/img/jan.png', color: '#9d72ff' },
+  { id: 'leo', name: 'Leo', image: '/img/leo.png', color: '#42d980' }
+]
+export const avatarProfile = (id: string | null | undefined) => AVATARS.find(a => a.id === id) ?? AVATARS[0]!
+
 export type TrainState =
   | 'APPROACH' | 'ENTERING' | 'DWELL' | 'READY_DEPART' | 'EXITING' | 'DEPARTED' | 'STUCK'
   | 'PARKING' | 'PARKED' | 'RETRIEVING'
@@ -60,7 +71,7 @@ export interface StationView {
   sideDisabled: { W: boolean, E: boolean }
 }
 export interface LinkView { id: string, a: string, b: string, occupant: (string | null)[] }
-export interface PlayerView { id: string, name: string, station: string | null, connected: boolean }
+export interface PlayerView { id: string, name: string, avatarId: AvatarId, station: string | null, connected: boolean }
 export interface TimetableEntry {
   id: string
   trainId: string | null
@@ -106,7 +117,7 @@ export interface GameSnapshot {
 // ---- Client -> Server ----
 export type ClientMessage =
   | { t: 'helloScreen' }
-  | { t: 'helloPlayer', name?: string, playerId?: string }
+  | { t: 'helloPlayer', avatarId?: AvatarId, playerId?: string }
   | { t: 'claimStation', station: string }
   | { t: 'releaseStation', station: string }
   | { t: 'setEntry', trainId: string, platform: number }

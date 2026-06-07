@@ -1,16 +1,16 @@
 <script setup lang="ts">
-import { computed, onMounted, ref } from 'vue'
-import { useGame, sendMsg, setPlayerName } from '../composables/useGame'
-import { PHASE_LABEL, TRAIN_KINDS, type TimetableEntry, type TrainView } from '../../shared/game'
+import { computed, ref } from 'vue'
+import { useGame, sendMsg, setPlayerAvatar } from '../composables/useGame'
+import { AVATARS, PHASE_LABEL, TRAIN_KINDS, type AvatarId, type PlayerView, type TimetableEntry, type TrainView } from '../../shared/game'
 import { PLATFORM_CLASS_META, kindAllowed, type Side } from '../../shared/layout'
 import { generateNetwork, type StationKind } from '../../shared/network'
 
 const { snapshot, connected, playerId, toasts } = useGame('player')
-const name = ref(''); const view = ref<'setup' | 'panel'>('setup')
+const chosenAvatar = ref<AvatarId | null>(null)
+const view = ref<'setup' | 'panel'>('setup')
 const tab = ref<string | null>(null) // solo: which station viewed
 const sel = ref<{ id: string, x: number, y: number } | null>(null)
 const hoverId = ref<string | null>(null)
-onMounted(() => { try { name.value = localStorage.getItem('swk_name') || '' } catch {} })
 
 const s = computed(() => snapshot.value)
 const net = computed(() => generateNetwork(s.value?.netCount ?? 2, (s.value?.netTypes as StationKind[] | undefined)))
@@ -25,10 +25,12 @@ const stationTaken = (sid: string) => {
   const owner = ownerOf(sid)
   return !!owner?.connected && owner.id !== playerId.value
 }
+const selectedAvatar = computed(() => chosenAvatar.value ?? me.value?.avatarId ?? null)
+const avatarTaken = (avatarId: AvatarId) => s.value?.players.some(p => p.id !== playerId.value && p.connected && p.avatarId === avatarId) ?? false
 
-function saveName() { try { localStorage.setItem('swk_name', name.value) } catch {}; setPlayerName(name.value || 'Fdl') }
+function chooseAvatar(avatarId: AvatarId) { if (!avatarTaken(avatarId)) { chosenAvatar.value = avatarId; setPlayerAvatar(avatarId) } }
 function claim(sid: string) { sendMsg({ t: 'claimStation', station: sid }) }
-function openPanel() { saveName(); view.value = 'panel' }
+function openPanel() { view.value = 'panel' }
 
 const fSide = (t: TrainView): Side => t.dir === 'E' ? 'E' : 'W'
 const selTrain = computed<TrainView | null>(() => sel.value ? (myTrains.value.find(t => t.id === sel.value!.id) ?? null) : null)
@@ -102,6 +104,16 @@ function rowStatus(row: TimetableEntry): string {
   }
   return labels[row.state] ?? 'geplant'
 }
+function handoffOwner(row: TimetableEntry): PlayerView | null {
+  if (!row.trainId) return null
+  const train = s.value?.trains.find(t => t.id === row.trainId)
+  if (!train?.station) return null
+  if (train.station !== row.station) return ownerOf(train.station) ?? null
+  if (train.state !== 'APPROACH') return null
+  const index = net.value.stations.findIndex(st => st.id === row.station)
+  const previous = train.dir === 'E' ? net.value.stations[index - 1] : net.value.stations[index + 1]
+  return previous ? (ownerOf(previous.id) ?? null) : null
+}
 function platformLabel(row: TimetableEntry) {
   const platform = row.platform ?? row.plannedPlatform
   if (row.platformStatus === 'ACTUAL') return `Gl ${platform}`
@@ -125,27 +137,37 @@ const menuPos = computed(() => sel.value ? { left: Math.min(sel.value.x, (typeof
     <div v-else-if="view === 'setup'" class="setup">
       <div class="title">Stellwerk übernehmen</div>
       <div class="muted small">Raum {{ s?.roomCode }} · {{ PHASE_LABEL[s?.phase ?? 'LOBBY'] }}</div>
-      <label class="fld">Dein Name<input v-model="name" class="inp" maxlength="14" placeholder="Fdl" @change="saveName" /></label>
+      <div class="muted small mt">Wähle dein Profil:</div>
+      <div class="avatar-grid">
+        <button v-for="avatar in AVATARS" :key="avatar.id" class="avatar-choice"
+          :class="{ selected: selectedAvatar === avatar.id, taken: avatarTaken(avatar.id) }"
+          :disabled="avatarTaken(avatar.id)" @click="chooseAvatar(avatar.id)">
+          <PlayerAvatar :avatar-id="avatar.id" :size="76" />
+          <b>{{ avatar.name }}</b>
+          <span v-if="avatarTaken(avatar.id)">belegt</span>
+        </button>
+      </div>
       <div class="muted small mt">Wähle dein Stellwerk:</div>
       <div class="st-grid">
         <button v-for="st in net.stations" :key="st.id" class="key st"
           :class="{ mine: me?.station === st.id, taken: stationTaken(st.id) }"
           :disabled="stationTaken(st.id)" @click="claim(st.id)">
-          <span class="st-id">{{ st.name }}</span>
-          <span class="st-own">{{ ownerOf(st.id)?.name ?? 'frei' }}</span>
+          <PlayerAvatar v-if="ownerOf(st.id)" :avatar-id="ownerOf(st.id)!.avatarId" :size="42" />
+          <span class="st-text"><span class="st-id">{{ st.name }}</span><span class="st-own">{{ ownerOf(st.id)?.name ?? 'frei' }}</span></span>
         </button>
       </div>
       <div v-if="s?.soloMode" class="hint">Solo-Notbetrieb — du steuerst alle Stellwerke (oben umschaltbar).</div>
-      <button class="key primary big" :disabled="!s?.soloMode && !me?.station" @click="openPanel">Stellbereich öffnen</button>
+      <button class="key primary big" :disabled="!selectedAvatar || (!s?.soloMode && !me?.station)" @click="openPanel">Stellbereich öffnen</button>
     </div>
 
     <!-- PANEL -->
     <div v-else class="panel">
       <header class="ph">
         <button class="key tiny" @click="view = 'setup'">≡</button>
+        <PlayerAvatar v-if="me" :avatar-id="me.avatarId" :size="46" />
         <div class="ph-mid">
           <div class="ph-name">{{ myStation?.name ?? '—' }}</div>
-          <div class="muted small">{{ PHASE_LABEL[s?.phase ?? 'LOBBY'] }} · {{ myTrains.length }} Züge</div>
+          <div class="muted small">{{ me?.name }} · {{ PHASE_LABEL[s?.phase ?? 'LOBBY'] }} · {{ myTrains.length }} Züge</div>
         </div>
         <div class="ph-stat mono" :class="{ low: (s?.punctualityPct ?? 100) < 70 }">{{ s?.punctualityPct }}%</div>
       </header>
@@ -243,7 +265,11 @@ const menuPos = computed(() => sel.value ? { left: Math.min(sel.value.x, (typeof
               <div class="tt-train">
                 <div><span class="tt-kind" :style="{ background: TRAIN_KINDS[row.kind].color }" /><b class="mono">{{ row.number }}</b></div>
                 <div class="tt-dest">{{ row.event === 'ARRIVAL' ? 'Ankunft' : 'nach' }} {{ row.destination }}</div>
-                <div class="tt-status">{{ rowStatus(row) }}</div>
+                <div v-if="handoffOwner(row)" class="tt-status tt-owner">
+                  <PlayerAvatar :avatar-id="handoffOwner(row)!.avatarId" :size="24" />
+                  <span>von {{ handoffOwner(row)!.name }} · {{ rowStatus(row) }}</span>
+                </div>
+                <div v-else class="tt-status">{{ rowStatus(row) }}</div>
               </div>
               <div class="tt-platform" :class="row.platformStatus.toLowerCase()">{{ platformLabel(row) }}</div>
             </div>
@@ -263,12 +289,16 @@ const menuPos = computed(() => sel.value ? { left: Math.min(sel.value.x, (typeof
 .banner { margin: auto; color: var(--muted); }
 .muted { color: var(--muted); } .small { font-size: 13px; } .sm { font-size: 12px; } .mt { margin-top: 14px; }
 
-.setup { padding: 22px; display: flex; flex-direction: column; gap: 10px; max-width: 640px; }
+.setup { padding: 22px; display: flex; flex-direction: column; gap: 10px; max-width: 760px; }
 .title { font-size: 28px; font-weight: 800; }
-.fld { display: flex; flex-direction: column; gap: 6px; margin-top: 16px; font-size: 13px; color: var(--muted); }
-.inp { background: var(--panel-2); border: 2px solid var(--grid); color: var(--text); padding: 13px; font-size: 18px; font-weight: 700; }
+.avatar-grid { display: grid; grid-template-columns: repeat(5, minmax(90px, 1fr)); gap: 10px; }
+.avatar-choice { display: flex; flex-direction: column; align-items: center; gap: 3px; min-width: 0; padding: 8px 5px; border: 2px solid var(--grid); background: var(--panel-2); color: var(--text); cursor: pointer; }
+.avatar-choice b { font-size: 14px; }.avatar-choice span { color: var(--muted); font-size: 10px; }
+.avatar-choice.selected { border-color: var(--accent); background: #2a2410; box-shadow: inset 0 0 0 1px var(--accent); }
+.avatar-choice.taken { opacity: 0.35; cursor: not-allowed; }
 .st-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
-.st { display: flex; flex-direction: column; align-items: flex-start; gap: 4px; padding: 16px; text-transform: none; }
+.st { display: flex; flex-direction: row; align-items: center; gap: 10px; padding: 12px 16px; text-transform: none; }
+.st-text { display: flex; flex-direction: column; align-items: flex-start; gap: 4px; }
 .st-id { font-size: 18px; font-weight: 800; } .st-own { font-size: 12px; color: var(--accent); }
 .st.mine { border-color: var(--green); background: #1f3a23; } .st.taken { opacity: 0.7; }
 .hint { color: var(--amber); font-size: 13px; } .big { font-size: 18px; padding: 16px; margin-top: 10px; }
@@ -321,6 +351,7 @@ const menuPos = computed(() => sel.value ? { left: Math.min(sel.value.x, (typeof
 .tt-train b { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .tt-dest { margin-top: 3px; font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .tt-status { margin-top: 3px; color: var(--muted); font-size: 10px; }
+.tt-owner { display: flex; align-items: center; gap: 5px; color: var(--text); }
 .tt-platform { justify-self: end; padding: 5px 6px; border: 1px solid var(--grid); font-size: 10px; font-weight: 800; text-align: center; white-space: nowrap; }
 .tt-platform.actual { border-color: var(--green); color: #c8ffd4; }
 .tt-platform.reserved { border-color: var(--amber); color: #ffe6b0; }
@@ -339,5 +370,8 @@ const menuPos = computed(() => sel.value ? { left: Math.min(sel.value.x, (typeof
   }
   .timetable { border-left: 0; border-top: 2px solid var(--grid); }
   .tt-row, .tt-cols { grid-template-columns: 62px minmax(0, 1fr) 66px; }
+}
+@media (max-width: 620px) {
+  .avatar-grid { grid-template-columns: repeat(3, 1fr); }
 }
 </style>

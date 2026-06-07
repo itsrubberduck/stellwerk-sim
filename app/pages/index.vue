@@ -2,7 +2,7 @@
 import { computed, ref, watch } from 'vue'
 import QRCode from 'qrcode'
 import { useGame, sendMsg } from '../composables/useGame'
-import { PHASE_LABEL, type TrainView } from '../../shared/game'
+import { PHASE_LABEL, avatarProfile, type TrainView } from '../../shared/game'
 import { CORRIDOR_KIND_LABEL } from '../../shared/layout'
 import { generateNetwork, type StationKind } from '../../shared/network'
 
@@ -28,6 +28,10 @@ const kindsFor = (i: number): StationKind[] => {
 function setType(i: number, kind: StationKind) { sendMsg({ t: 'setStationType', index: i, kind }) }
 const fmtTime = (sec: number) => `${Math.floor(sec / 60)}:${String(sec % 60).padStart(2, '0')}`
 const ownerOf = (sid: string) => s.value?.players.find(p => p.station === sid)
+const ownerStyle = (sid: string) => {
+  const owner = ownerOf(sid)
+  return owner ? { '--owner-color': avatarProfile(owner.avatarId).color } : {}
+}
 const stationView = (sid: string) => s.value?.stations.find(st => st.id === sid)
 const trainsIn = (sid: string): TrainView[] => (s.value?.trains ?? []).filter(t => t.station === sid)
 const linkBetween = (aId: string) => s.value?.links.find(l => l.a === aId)
@@ -69,8 +73,15 @@ function setCount(n: number) { sendMsg({ t: 'setNetwork', count: n }) }
       <div class="lobby-right">
         <div class="muted small label">Stellwerke &amp; Besetzung</div>
         <div class="st-list">
-          <div v-for="(st, i) in stations" :key="st.id" class="st-row" :class="{ taken: !!ownerOf(st.id) }">
-            <div class="st-top"><div class="st-name">{{ st.name }}</div><div class="st-owner">{{ ownerOf(st.id)?.name ?? 'frei' }}</div></div>
+          <div v-for="(st, i) in stations" :key="st.id" class="st-row" :class="{ taken: !!ownerOf(st.id) }" :style="ownerStyle(st.id)">
+            <div class="st-top">
+              <div><div class="st-name">{{ st.name }}</div><div class="muted small">{{ CORRIDOR_KIND_LABEL[st.kind] }}</div></div>
+              <div v-if="ownerOf(st.id)" class="owner-badge">
+                <PlayerAvatar :avatar-id="ownerOf(st.id)!.avatarId" :size="58" />
+                <b>{{ ownerOf(st.id)!.name }}</b>
+              </div>
+              <div v-else class="st-owner">frei</div>
+            </div>
             <div class="type-chips">
               <button v-for="k in kindsFor(i)" :key="k" class="key chip" :class="{ on: st.kind === k }" @click="setType(i, k)">{{ CORRIDOR_KIND_LABEL[k] }}</button>
             </div>
@@ -92,11 +103,24 @@ function setCount(n: number) { sendMsg({ t: 'setNetwork', count: n }) }
         <div class="stat"><div class="num">{{ fmtTime(s?.elapsed ?? 0) }}</div><div class="lbl">{{ PHASE_LABEL[phase] }}</div></div>
         <button class="key danger abort-btn" @click="abort">⊗ Abbrechen</button>
       </header>
+      <div class="crew-strip">
+        <div v-for="st in stations" :key="st.id" class="crew-member" :class="{ vacant: !ownerOf(st.id) }" :style="ownerStyle(st.id)">
+          <PlayerAvatar v-if="ownerOf(st.id)" :avatar-id="ownerOf(st.id)!.avatarId" :size="42" />
+          <div><b>{{ st.name }}</b><span>{{ ownerOf(st.id)?.name ?? 'unbesetzt' }}</span></div>
+        </div>
+      </div>
 
       <div class="corridor">
         <template v-for="(st, i) in stations" :key="st.id">
-          <div class="st-panel">
-            <div class="st-head"><b>{{ st.name }}</b><span class="muted">{{ CORRIDOR_KIND_LABEL[st.kind] }} · {{ ownerOf(st.id)?.name ?? 'unbesetzt' }}</span></div>
+          <div class="st-panel" :class="{ owned: !!ownerOf(st.id) }" :style="ownerStyle(st.id)">
+            <div class="st-head">
+              <div><b>{{ st.name }}</b><span class="muted">{{ CORRIDOR_KIND_LABEL[st.kind] }}</span></div>
+              <div v-if="ownerOf(st.id)" class="panel-owner">
+                <PlayerAvatar :avatar-id="ownerOf(st.id)!.avatarId" :size="38" />
+                <b>{{ ownerOf(st.id)!.name }}</b>
+              </div>
+              <span v-else class="muted">unbesetzt</span>
+            </div>
             <div class="st-canvas">
               <StationCanvas v-if="stationView(st.id)" :layout="st.layout" :station="stationView(st.id)!" :trains="trainsIn(st.id)" compact />
             </div>
@@ -136,10 +160,11 @@ function setCount(n: number) { sendMsg({ t: 'setNetwork', count: n }) }
 .lobby-right { background: var(--panel); border: 2px solid var(--grid); padding: 20px; overflow: auto; }
 .st-list { display: flex; flex-direction: column; gap: 10px; }
 .st-row { background: var(--panel-2); border: 2px solid var(--grid); border-left-width: 5px; padding: 12px; }
-.st-row.taken { border-color: var(--green); }
+.st-row.taken { border-color: var(--owner-color); box-shadow: inset 5px 0 var(--owner-color); }
 .st-top { display: flex; justify-content: space-between; align-items: baseline; }
 .st-name { font-size: 18px; font-weight: 800; }
 .st-owner { color: var(--accent); font-weight: 700; font-size: 13px; }
+.owner-badge { display: flex; align-items: center; gap: 8px; color: var(--owner-color); font-size: 16px; }
 .type-chips { display: flex; gap: 6px; margin-top: 8px; flex-wrap: wrap; }
 .chip { padding: 7px 10px; font-size: 12px; text-transform: none; letter-spacing: 0; }
 .chip.on { border-color: var(--accent); background: #2a2410; color: var(--accent); }
@@ -149,11 +174,17 @@ function setCount(n: number) { sendMsg({ t: 'setNetwork', count: n }) }
 .stat { text-align: center; } .stat .num { font-size: 24px; font-weight: 800; font-family: ui-monospace, monospace; } .stat.big .num { font-size: 36px; }
 .stat .num.low { color: var(--red); } .stat .lbl { font-size: 11px; color: var(--muted); text-transform: uppercase; letter-spacing: 0.06em; } .spacer { flex: 1; }
 .abort-btn { padding: 9px 12px; font-size: 12px; }
+.crew-strip { display: flex; gap: 8px; padding: 8px 12px; background: #10151a; border-bottom: 1px solid var(--grid); }
+.crew-member { min-width: 150px; display: flex; align-items: center; gap: 8px; padding: 5px 10px; border: 1px solid var(--owner-color); background: color-mix(in srgb, var(--owner-color) 10%, var(--panel)); }
+.crew-member > div { display: flex; flex-direction: column; }.crew-member b { font-size: 13px; }.crew-member span { color: var(--owner-color); font-size: 12px; font-weight: 800; }
+.crew-member.vacant { --owner-color: var(--grid); opacity: 0.55; }
 
 .corridor { flex: 1; min-height: 0; display: flex; align-items: stretch; padding: 12px; gap: 0; }
 .st-panel { flex: 1; min-width: 0; display: flex; flex-direction: column; border: 2px solid var(--grid); background: #0e1318; }
-.st-head { display: flex; justify-content: space-between; align-items: baseline; padding: 8px 12px; border-bottom: 1px solid var(--grid); }
-.st-head b { font-size: 16px; } .st-head .muted { font-size: 13px; }
+.st-panel.owned { border-color: var(--owner-color); box-shadow: 0 0 16px color-mix(in srgb, var(--owner-color) 22%, transparent); }
+.st-head { min-height: 54px; display: flex; justify-content: space-between; align-items: center; gap: 8px; padding: 6px 10px; border-bottom: 1px solid var(--grid); }
+.st-head > div:first-child { display: flex; flex-direction: column; }.st-head b { font-size: 16px; } .st-head .muted { font-size: 11px; }
+.panel-owner { display: flex; align-items: center; gap: 6px; color: var(--owner-color); }
 .st-canvas { flex: 1; min-height: 0; }
 .link-col { width: 70px; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 8px; }
 .link-label { font-size: 10px; color: var(--muted); text-transform: uppercase; writing-mode: vertical-rl; position: absolute; opacity: 0; }

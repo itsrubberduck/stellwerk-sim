@@ -77,7 +77,7 @@ class Room {
         meta.role = 'player'
         const id = msg.playerId || `p${Math.random().toString(36).slice(2, 8)}`
         meta.playerId = id
-        e.addPlayer(id, msg.name ?? '')
+        e.addPlayer(id, msg.avatarId)
         this.send(peer, { t: 'welcome', playerId: id })
         break
       }

@@ -4,7 +4,7 @@
 // through the chain; departing onto a LINK hands the train to the neighbour
 // (the hand-over track is a shared block — the neighbour must clear it).
 
-import { TRAIN_KINDS, type GameSnapshot, type Phase, type TimetableEntry, type TrainKind, type TrainState } from '../../shared/game'
+import { AVATARS, TRAIN_KINDS, avatarProfile, type AvatarId, type GameSnapshot, type Phase, type TimetableEntry, type TrainKind, type TrainState } from '../../shared/game'
 import { kindAllowed, routesConflict, type Layout, type RouteDef, type Side } from '../../shared/layout'
 import { defaultTypes, generateNetwork, type LinkDef, type NetworkDef, type SideRole, type StationDef, type StationKind } from '../../shared/network'
 
@@ -65,7 +65,7 @@ interface Spec {
   firstLine: string
   originTerminus: boolean
 }
-interface Player { id: string, name: string, station: string | null, connected: boolean }
+interface Player { id: string, name: string, avatarId: AvatarId, station: string | null, connected: boolean }
 
 class Station {
   platforms: (string | null)[]
@@ -155,10 +155,19 @@ export class GameEngine {
   }
 
   // ---------- players ----------
-  addPlayer(id: string, name: string): Player {
+  addPlayer(id: string, requestedAvatar?: string): Player {
     let p = this.players.get(id)
-    if (!p) { p = { id, name: name || `Fdl ${this.players.size + 1}`, station: null, connected: true }; this.players.set(id, p) }
-    else { p.connected = true; if (name) p.name = name }
+    const requested = AVATARS.find(a => a.id === requestedAvatar)
+    const avatarTaken = (avatarId: AvatarId) => [...this.players.values()].some(o => o.id !== id && o.connected && o.avatarId === avatarId)
+    if (!p) {
+      const avatar = requested && !avatarTaken(requested.id) ? requested : (AVATARS.find(a => !avatarTaken(a.id)) ?? AVATARS[0]!)
+      p = { id, name: avatar.name, avatarId: avatar.id, station: null, connected: true }
+      this.players.set(id, p)
+    } else {
+      p.connected = true
+      if (requested && !avatarTaken(requested.id)) { p.avatarId = requested.id; p.name = requested.name }
+      else p.name = avatarProfile(p.avatarId).name
+    }
     return p
   }
   setPlayerConnected(id: string, c: boolean) { const p = this.players.get(id); if (p) p.connected = c }
@@ -574,7 +583,7 @@ export class GameEngine {
       backlog: this.pending.length, maxBacklog: this.maxBacklog,
       score: this.score, punctual: this.punctual, departed: this.departed, deviations: this.deviations, handoffs: this.handoffs, forcedBrakes: this.forcedBrakes,
       punctualityPct: this.departed > 0 ? Math.round((this.punctual / this.departed) * 100) : 100,
-      players: [...this.players.values()].map(p => ({ id: p.id, name: p.name, station: p.station, connected: p.connected })),
+      players: [...this.players.values()].map(p => ({ id: p.id, name: p.name, avatarId: p.avatarId, station: p.station, connected: p.connected })),
       roomCode: this.roomCode, soloMode: this.soloMode
     }
   }

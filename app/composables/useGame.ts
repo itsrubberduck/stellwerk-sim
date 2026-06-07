@@ -1,5 +1,5 @@
 import { ref, shallowRef } from 'vue'
-import type { ClientMessage, GameSnapshot, ServerMessage } from '../../shared/game'
+import type { AvatarId, ClientMessage, GameSnapshot, ServerMessage } from '../../shared/game'
 
 export interface Toast { id: number, kind: 'good' | 'bad' | 'info', text: string }
 
@@ -11,7 +11,7 @@ const toasts = ref<Toast[]>([])
 let toastSeq = 0
 const queue: ClientMessage[] = []
 let role: 'screen' | 'player' = 'screen'
-let helloName = ''
+let helloAvatar: AvatarId | undefined
 let started = false
 
 function wsUrl() {
@@ -32,7 +32,7 @@ export function sendMsg(msg: ClientMessage) {
 
 function hello() {
   if (role === 'screen') sendMsg({ t: 'helloScreen' })
-  else sendMsg({ t: 'helloPlayer', name: helloName, playerId: playerId.value ?? undefined })
+  else sendMsg({ t: 'helloPlayer', avatarId: helloAvatar, playerId: playerId.value ?? undefined })
 }
 
 function connect() {
@@ -66,16 +66,19 @@ export function useGame(asRole: 'screen' | 'player', name = '') {
   if (!started) {
     started = true
     role = asRole
-    helloName = name
     if (asRole === 'player') {
-      try { playerId.value = localStorage.getItem('swk_playerId') } catch {}
+      try {
+        playerId.value = localStorage.getItem('swk_playerId')
+        helloAvatar = (localStorage.getItem('swk_avatar') as AvatarId | null) ?? undefined
+      } catch {}
     }
     connect()
   }
   return { snapshot, connected, playerId, toasts, sendMsg }
 }
 
-export function setPlayerName(name: string) {
-  helloName = name
-  sendMsg({ t: 'helloPlayer', name, playerId: playerId.value ?? undefined })
+export function setPlayerAvatar(avatarId: AvatarId) {
+  helloAvatar = avatarId
+  try { localStorage.setItem('swk_avatar', avatarId) } catch {}
+  sendMsg({ t: 'helloPlayer', avatarId, playerId: playerId.value ?? undefined })
 }
