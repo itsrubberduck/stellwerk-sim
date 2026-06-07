@@ -447,7 +447,19 @@ export class GameEngine {
         case 'APPROACH': case 'READY_DEPART': t.delaySec += dt; break
         case 'ENTERING':
           t.progress += dt / ENTER_TIME
-          if (t.progress >= 1) { t.progress = 1; t.state = 'DWELL'; t.dwellLeft = DWELL_TIME; t.routeId = null }
+          if (t.progress >= 1) {
+            t.progress = 1; t.state = 'DWELL'; t.routeId = null
+            const _s = this.st(t.station)
+            const _pf = _s && t.platform != null ? _s.layout.platforms[t.platform - 1] : undefined
+            const isBypass = (t.kind === 'FREIGHT' || t.kind === 'V60' || t.kind === 'V100')
+              && _pf?.cls === 'GUETER' && !this.isFinalTerminus(t)
+            if (isBypass && t.station && t.soll[t.station]?.exitLine) {
+              t.dwellLeft = 1.5
+              if (!t.resv) t.resv = { kind: 'exit', exitLine: t.soll[t.station]!.exitLine, order: ++this.resvSeq }
+            } else {
+              t.dwellLeft = DWELL_TIME
+            }
+          }
           break
         case 'DWELL': t.dwellLeft -= dt; if (t.dwellLeft <= 0) { t.dwellLeft = 0; if (this.isFinalTerminus(t)) this.terminate(t); else t.state = 'READY_DEPART' } break
         case 'EXITING': t.progress += dt / EXIT_TIME; if (t.progress >= 1) this.finishLeg(t); break

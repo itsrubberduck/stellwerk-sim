@@ -212,24 +212,105 @@ function corridorSidings(): SidingDef[] {
 }
 
 // ---- corridor station types (selectable per station) ----
-export type CorridorKind = 'DURCHGANG' | 'KNOTEN' | 'ABZWEIG' | 'GROSS'
+export type CorridorKind = 'DURCHGANG' | 'KNOTEN' | 'ABZWEIG' | 'GROSS' | 'VORORT' | 'GUETERBF'
 const KIND_CONF: Record<CorridorKind, { p: number, classes: PlatformClass[] }> = {
   DURCHGANG: { p: 5, classes: ['LANG', 'LANG', 'LANG', 'KURZ', 'GUETER'] },
-  KNOTEN: { p: 6, classes: ['LANG', 'LANG', 'LANG', 'LANG', 'KURZ', 'GUETER'] },
-  ABZWEIG: { p: 6, classes: ['LANG', 'LANG', 'LANG', 'LANG', 'KURZ', 'GUETER'] },
-  GROSS: { p: 8, classes: ['LANG', 'LANG', 'LANG', 'LANG', 'LANG', 'KURZ', 'KURZ', 'GUETER'] }
+  KNOTEN:    { p: 6, classes: ['LANG', 'LANG', 'LANG', 'LANG', 'KURZ', 'GUETER'] },
+  ABZWEIG:   { p: 6, classes: ['LANG', 'LANG', 'LANG', 'LANG', 'KURZ', 'GUETER'] },
+  GROSS:     { p: 8, classes: ['LANG', 'LANG', 'LANG', 'LANG', 'LANG', 'KURZ', 'KURZ', 'GUETER'] },
+  VORORT:    { p: 3, classes: ['LANG', 'LANG', 'KURZ'] },
+  GUETERBF:  { p: 5, classes: ['LANG', 'KURZ', 'LANG', 'GUETER', 'GUETER'] },
 }
 export const CORRIDOR_KIND_LABEL: Record<string, string> = {
-  DURCHGANG: 'Durchgang', KNOTEN: 'Knoten', ABZWEIG: 'Abzweig', GROSS: 'Großbf', KOPF: 'Kopfbahnhof'
+  DURCHGANG: 'Durchgang', KNOTEN: 'Knoten', ABZWEIG: 'Abzweig', GROSS: 'Großbf', KOPF: 'Kopfbahnhof',
+  VORORT: 'Vorortbf', GUETERBF: 'Güterbf'
+}
+
+// Non-uniform platform Y positions — creates natural clusters instead of ruler-grid
+const KIND_PLAT_Y: Partial<Record<CorridorKind, number[]>> = {
+  DURCHGANG: [165, 272, 425, 562, 658],
+  KNOTEN:    [158, 262, 383, 502, 614, 682],
+  ABZWEIG:   [160, 265, 388, 508, 616, 685],
+}
+// Per-platform X stagger — subtle offset so platform ends don't all line up perfectly
+const KIND_PLAT_X: Partial<Record<CorridorKind, Array<{ l: number, r: number }>>> = {
+  DURCHGANG: [{ l: 578, r: 1022 }, { l: 563, r: 1007 }, { l: 586, r: 1032 }, { l: 592, r: 1016 }, { l: 558, r: 988 }],
+  KNOTEN:    [{ l: 578, r: 1022 }, { l: 566, r: 1010 }, { l: 584, r: 1030 }, { l: 572, r: 1018 }, { l: 596, r: 1024 }, { l: 554, r: 986 }],
+  ABZWEIG:   [{ l: 576, r: 1024 }, { l: 562, r: 1008 }, { l: 588, r: 1034 }, { l: 574, r: 1016 }, { l: 598, r: 1022 }, { l: 552, r: 984 }],
 }
 
 export function buildCorridorStation(name: string, kind: CorridorKind, wCount: number, eCount: number): Layout {
   const conf = KIND_CONF[kind]
   const lines: LineDef[] = []
-  for (let i = 0; i < wCount; i++) { const y = spread(wCount, LINE_TOP, LINE_BOT, i); lines.push(mkLine(`W${i + 1}`, 'W', `West ${i + 1}`, i, y, y)) }
-  for (let j = 0; j < eCount; j++) { const y = spread(eCount, LINE_TOP, LINE_BOT, j); lines.push(mkLine(`E${j + 1}`, 'E', `Ost ${j + 1}`, j, y, y)) }
   const platforms: PlatformDef[] = []
-  for (let k = 0; k < conf.p; k++) platforms.push({ index: k + 1, y: spread(conf.p, PLAT_TOP, PLAT_BOT, k), leftX: PL, rightX: PR, centerX: CENTER, cls: conf.classes[k] ?? 'LANG', openL: true, openR: true })
+
+  // --- GUETERBF: two-sector layout (passenger top + freight bypass bottom) ---
+  // Inspired by Duisburg Gbf / Maschen: dedicated bypass tracks run alongside the passenger hall.
+  // Freight trains on GUETER tracks auto-dispatch (handled in engine).
+  if (kind === 'GUETERBF') {
+    const passW = Math.max(1, Math.floor(wCount / 2)), frtW = wCount - passW
+    const passE = Math.max(1, Math.floor(eCount / 2)), frtE = eCount - passE
+    for (let i = 0; i < passW; i++) { const y = spread(passW, 178, 428, i); lines.push(mkLine(`W${i + 1}`, 'W', `Gl ${i + 1}`, i, y, y)) }
+    for (let i = 0; i < frtW; i++) { const y = spread(frtW, 558, 650, i); lines.push(mkLine(`W${passW + i + 1}`, 'W', `Gü ${i + 1}`, passW + i, y, y)) }
+    for (let j = 0; j < passE; j++) { const y = spread(passE, 178, 428, j); lines.push(mkLine(`E${j + 1}`, 'E', `Gl ${j + 1}`, j, y, y)) }
+    for (let j = 0; j < frtE; j++) { const y = spread(frtE, 558, 650, j); lines.push(mkLine(`E${passE + j + 1}`, 'E', `Gü ${j + 1}`, passE + j, y, y)) }
+    // passenger sector
+    const pYs = [178, 308, 428]
+    const pXs = [{ l: 596, r: 1004 }, { l: 610, r: 990 }, { l: 584, r: 1016 }]
+    for (let k = 0; k < 3; k++) { const px = pXs[k]!; platforms.push({ index: k + 1, y: pYs[k]!, leftX: px.l, rightX: px.r, centerX: (px.l + px.r) / 2, cls: conf.classes[k]!, openL: true, openR: true }) }
+    // freight bypass (much wider — nearly straight-through)
+    platforms.push({ index: 4, y: 558, leftX: 438, rightX: 1162, centerX: 800, cls: 'GUETER', openL: true, openR: true })
+    platforms.push({ index: 5, y: 652, leftX: 428, rightX: 1172, centerX: 800, cls: 'GUETER', openL: true, openR: true })
+    const reach = (l: LineDef, p: PlatformDef) => (l.y >= 490) === (p.cls === 'GUETER')
+    return finish('KNOTEN', name, 'THROUGH', ['W', 'E'], lines, platforms, reach, corridorSidings())
+  }
+
+  // --- VORORT: compact suburban through-station ---
+  // Inspired by Reutlingen Hbf / Darmstadt Hbf (small): tight platform cluster,
+  // fewer tracks, narrower platform zone.
+  if (kind === 'VORORT') {
+    for (let i = 0; i < wCount; i++) { const y = spread(wCount, 318, 564, i); lines.push(mkLine(`W${i + 1}`, 'W', `Gl ${i + 1}`, i, y, y)) }
+    for (let j = 0; j < eCount; j++) { const y = spread(eCount, 318, 564, j); lines.push(mkLine(`E${j + 1}`, 'E', `Gl ${j + 1}`, j, y, y)) }
+    platforms.push({ index: 1, y: 322, leftX: 648, rightX: 972, centerX: 810, cls: 'LANG', openL: true, openR: true })
+    platforms.push({ index: 2, y: 456, leftX: 655, rightX: 966, centerX: 810, cls: 'LANG', openL: true, openR: true })
+    platforms.push({ index: 3, y: 563, leftX: 670, rightX: 952, centerX: 811, cls: 'KURZ', openL: true, openR: true })
+    const reach = (l: LineDef, p: PlatformDef) => {
+      const n = l.side === 'W' ? wCount : eCount
+      return Math.abs(norm(n, l.index) - norm(3, p.index - 1)) <= 0.75
+    }
+    return finish('KNOTEN', name, 'THROUGH', ['W', 'E'], lines, platforms, reach)
+  }
+
+  // --- Standard kinds: DURCHGANG / KNOTEN / ABZWEIG / GROSS ---
+  // West lines: uniform spread
+  for (let i = 0; i < wCount; i++) {
+    const y = spread(wCount, LINE_TOP, LINE_BOT, i)
+    lines.push(mkLine(`W${i + 1}`, 'W', `West ${i + 1}`, i, y, y))
+  }
+  // East lines: ABZWEIG gets a dramatic branch fan-out (upper tracks converge from above,
+  // lower tracks from below) — inspired by Würzburg Hbf / Mannheim Hbf Y-junction geometry.
+  for (let j = 0; j < eCount; j++) {
+    const y = spread(eCount, LINE_TOP, LINE_BOT, j)
+    if (kind === 'ABZWEIG') {
+      const nj = norm(eCount, j)
+      const fan = nj < 0.5 ? -118 : 118
+      const edgeY = Math.max(15, Math.min(VH - 15, y + fan))
+      lines.push(mkLine(`E${j + 1}`, 'E', `Ast ${j + 1}`, j, y, edgeY))
+    } else {
+      lines.push(mkLine(`E${j + 1}`, 'E', `Ost ${j + 1}`, j, y, y))
+    }
+  }
+
+  // Platforms with custom Y (non-uniform) and per-platform X stagger
+  const platYs = KIND_PLAT_Y[kind]
+  const platXs = KIND_PLAT_X[kind]
+  for (let k = 0; k < conf.p; k++) {
+    const y = platYs ? (platYs[k] ?? spread(conf.p, PLAT_TOP, PLAT_BOT, k)) : spread(conf.p, PLAT_TOP, PLAT_BOT, k)
+    const px = platXs?.[k]
+    const lx = px?.l ?? PL, rx = px?.r ?? PR
+    platforms.push({ index: k + 1, y, leftX: lx, rightX: rx, centerX: (lx + rx) / 2, cls: conf.classes[k] ?? 'LANG', openL: true, openR: true })
+  }
+
   const reach = (l: LineDef, pf: PlatformDef) => {
     const n = l.side === 'W' ? wCount : eCount
     const tp = norm(n, l.index), pp = norm(conf.p, pf.index - 1)
