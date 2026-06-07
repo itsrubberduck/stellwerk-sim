@@ -54,6 +54,23 @@ export interface StationView {
 }
 export interface LinkView { id: string, a: string, b: string, occupant: (string | null)[] }
 export interface PlayerView { id: string, name: string, station: string | null, connected: boolean }
+export interface TimetableEntry {
+  id: string
+  trainId: string | null
+  number: string
+  kind: TrainKind
+  dir: 'E' | 'W'
+  station: string
+  destination: string
+  event: 'ARRIVAL' | 'DEPARTURE'
+  plannedTime: number
+  estimatedTime: number | null
+  plannedPlatform: number
+  platform: number | null
+  platformStatus: 'ACTUAL' | 'RESERVED' | 'PLANNED'
+  state: TrainState | 'SCHEDULED'
+  staged: boolean
+}
 
 export interface GameSnapshot {
   netCount: number
@@ -64,6 +81,7 @@ export interface GameSnapshot {
   links: LinkView[]
   trains: TrainView[]
   incoming: { number: string, kind: TrainKind, dir: 'E' | 'W', firstStation: string, inSec: number }[]
+  timetable: TimetableEntry[]
   backlog: number
   maxBacklog: number
   score: number

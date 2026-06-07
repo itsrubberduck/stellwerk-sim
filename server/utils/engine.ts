@@ -4,7 +4,7 @@
 // through the chain; departing onto a LINK hands the train to the neighbour
 // (the hand-over track is a shared block — the neighbour must clear it).
 
-import { TRAIN_KINDS, type GameSnapshot, type Phase, type TrainKind, type TrainState } from '../../shared/game'
+import { TRAIN_KINDS, type GameSnapshot, type Phase, type TimetableEntry, type TrainKind, type TrainState } from '../../shared/game'
 import { kindAllowed, routesConflict, type Layout, type RouteDef, type Side } from '../../shared/layout'
 import { defaultTypes, generateNetwork, type LinkDef, type NetworkDef, type SideRole, type StationDef, type StationKind } from '../../shared/network'
 
@@ -17,6 +17,7 @@ const PUNCTUAL_THRESHOLD = 50
 const PREVIEW_LEN = 6
 const DEVIATION_PENALTY = 50
 const HANDOFF_BONUS = 25
+const TIMETABLE_HORIZON = 12
 
 interface PhaseCfg { until: number, spawn: number }
 const PHASES: { name: Phase, cfg: PhaseCfg }[] = [
@@ -27,6 +28,7 @@ const PHASES: { name: Phase, cfg: PhaseCfg }[] = [
 
 interface Resv { kind: 'entry' | 'exit', platform?: number, exitLine?: string, order: number }
 interface SollLeg { platform: number, exitLine: string }
+interface ScheduleLeg { arrival: number, departure: number }
 interface Train {
   id: string
   number: string
@@ -50,9 +52,19 @@ interface Train {
   routeId: string | null
   sidingIndex: number | null
   staged: boolean
+  schedule: Record<string, ScheduleLeg>
   resv: Resv | null
 }
-interface Spec { number: string, kind: TrainKind, dir: 'E' | 'W' }
+interface Spec {
+  id: string
+  number: string
+  kind: TrainKind
+  dir: 'E' | 'W'
+  staged: boolean
+  soll: Record<string, SollLeg>
+  firstLine: string
+  originTerminus: boolean
+}
 interface Player { id: string, name: string, station: string | null, connected: boolean }
 
 class Station {
@@ -152,8 +164,11 @@ export class GameEngine {
   setPlayerConnected(id: string, c: boolean) { const p = this.players.get(id); if (p) p.connected = c }
   claimStation(pid: string, sid: string) {
     if (!this.stations.has(sid)) return
-    for (const p of this.players.values()) if (p.station === sid) p.station = null
-    const p = this.players.get(pid); if (p) p.station = sid
+    const p = this.players.get(pid); if (!p) return
+    const owner = [...this.players.values()].find(o => o.id !== pid && o.station === sid)
+    if (owner?.connected) return
+    if (owner) owner.station = null
+    p.station = sid
   }
   releaseStation(pid: string, sid: string) { const p = this.players.get(pid); if (p && p.station === sid) p.station = null }
   setSolo(v: boolean) { this.soloMode = v }
@@ -192,10 +207,14 @@ export class GameEngine {
   // ---------- spawning + soll route ----------
   private refillPreview() { while (this.preview.length < PREVIEW_LEN) this.preview.push(this.genSpec()) }
   private genSpec(): Spec {
-    const r = Math.random()
-    const kind: TrainKind = r < 0.16 ? 'SPRINTER' : r < 0.58 ? 'ICE' : r < 0.82 ? 'IC' : 'FREIGHT'
-    const dir: 'E' | 'W' = Math.random() < 0.5 ? 'E' : 'W'
-    return { number: this.genNumber(kind), kind, dir }
+    for (;;) {
+      const r = Math.random()
+      const kind: TrainKind = r < 0.16 ? 'SPRINTER' : r < 0.58 ? 'ICE' : r < 0.82 ? 'IC' : 'FREIGHT'
+      const dir: 'E' | 'W' = Math.random() < 0.5 ? 'E' : 'W'
+      const staged = this.phase !== 'RUHE' && Math.random() < 0.16
+      const built = this.buildSoll(kind, dir, staged)
+      if (built) return { id: uid('f'), number: this.genNumber(kind), kind, dir, staged, soll: built.soll, firstLine: built.firstLine, originTerminus: built.originTerminus }
+    }
   }
   private genNumber(kind: TrainKind): string {
     if (kind === 'SPRINTER') return `ICE ${1000 + Math.floor(Math.random() * 99)}`
@@ -248,17 +267,27 @@ export class GameEngine {
     return null
   }
 
+  private buildSchedule(spec: Pick<Spec, 'dir' | 'staged' | 'originTerminus'>, start: number): Record<string, ScheduleLeg> {
+    const schedule: Record<string, ScheduleLeg> = {}
+    let arrival = start
+    for (const [i, station] of this.order(spec.dir).entries()) {
+      const originNoEntry = i === 0 && (spec.originTerminus || spec.staged)
+      const departure = arrival + (originNoEntry ? (spec.staged ? RETRIEVE_TIME : 0) : ENTER_TIME + DWELL_TIME)
+      schedule[station.id] = { arrival, departure }
+      arrival = departure + EXIT_TIME
+    }
+    return schedule
+  }
+
   private spawnFromSpec(spec: Spec) {
-    const staged = this.phase !== 'RUHE' && Math.random() < 0.16
-    const built = this.buildSoll(spec.kind, spec.dir, staged)
-    if (!built) return
     const order = this.order(spec.dir)
     const firstStation = order[0]!.id
     const t: Train = {
       id: uid('t'), number: spec.number, kind: spec.kind, dir: spec.dir,
-      station: firstStation, originTerminus: staged ? false : built.originTerminus, arrLine: built.firstLine, arrLink: null, exitLine: null, platform: null,
-      soll: built.soll, deviated: false, state: 'PENDING', delaySec: 0, progress: 0, dwellLeft: 0,
-      connectionId: null, connectionMet: false, stuckLeft: 0, routeId: null, sidingIndex: null, staged, resv: null
+      station: firstStation, originTerminus: spec.staged ? false : spec.originTerminus, arrLine: spec.firstLine, arrLink: null, exitLine: null, platform: null,
+      soll: spec.soll, deviated: false, state: 'PENDING', delaySec: 0, progress: 0, dwellLeft: 0,
+      connectionId: null, connectionMet: false, stuckLeft: 0, routeId: null, sidingIndex: null, staged: spec.staged,
+      schedule: this.buildSchedule(spec, this.elapsed), resv: null
     }
     if (this.phase !== 'RUHE' && Math.random() < 0.18) {
       const partner = this.trains.find(o => !o.connectionId && (o.state === 'APPROACH' || o.state === 'DWELL'))
@@ -426,6 +455,86 @@ export class GameEngine {
   pushToast(kind: 'good' | 'bad' | 'info', text: string) { this.toasts.push({ kind, text }) }
   drainToasts() { const t = this.toasts; this.toasts = []; return t }
 
+  private destination(dir: 'E' | 'W'): string {
+    const last = this.order(dir).at(-1)!
+    const role = this.roleOf(last, this.forwardSide(dir))
+    return role.kind === 'END' ? last.name : `Netz ${dir === 'E' ? 'Ost' : 'West'}`
+  }
+  private currentDepartureEstimate(t: Train): number | null {
+    switch (t.state) {
+      case 'APPROACH': return this.elapsed + ENTER_TIME + DWELL_TIME
+      case 'ENTERING': return this.elapsed + (1 - t.progress) * ENTER_TIME + DWELL_TIME
+      case 'DWELL': return this.elapsed + t.dwellLeft
+      case 'READY_DEPART': case 'EXITING': return this.elapsed
+      case 'STUCK': return this.elapsed + Math.max(0, t.stuckLeft) + Math.max(0, t.dwellLeft)
+      case 'RETRIEVING': return this.elapsed + (1 - t.progress) * RETRIEVE_TIME
+      case 'PARKING': case 'PARKED': return null
+      default: return null
+    }
+  }
+  private trainEstimateAt(t: Train, stationId: string, event: 'ARRIVAL' | 'DEPARTURE'): number | null {
+    if (!t.station) return null
+    const order = this.order(t.dir)
+    const current = order.findIndex(s => s.id === t.station)
+    const target = order.findIndex(s => s.id === stationId)
+    if (current < 0 || target < current) return null
+    const planned = t.schedule[stationId]!
+    if (target === current) {
+      if (event === 'ARRIVAL') return Math.max(planned.arrival, this.elapsed)
+      const departure = this.currentDepartureEstimate(t)
+      return departure == null ? null : Math.max(planned.departure, departure)
+    }
+    const currentDeparture = this.currentDepartureEstimate(t)
+    if (currentDeparture == null) return null
+    let arrival = currentDeparture + (t.state === 'EXITING' ? (1 - t.progress) * EXIT_TIME : EXIT_TIME)
+    for (let i = current + 1; i <= target; i++) {
+      if (i === target) return Math.max(event === 'ARRIVAL' ? planned.arrival : planned.departure, event === 'ARRIVAL' ? arrival : arrival + ENTER_TIME + DWELL_TIME)
+      arrival += ENTER_TIME + DWELL_TIME + EXIT_TIME
+    }
+    return null
+  }
+  private timetable(interval: number): TimetableEntry[] {
+    const rows: TimetableEntry[] = []
+    for (const t of this.trains) {
+      if (!t.station) continue
+      const order = this.order(t.dir)
+      const current = order.findIndex(s => s.id === t.station)
+      for (let i = current; i < order.length; i++) {
+        const station = order[i]!
+        const leg = t.soll[station.id]!
+        const schedule = t.schedule[station.id]!
+        const event = leg.exitLine ? 'DEPARTURE' : 'ARRIVAL'
+        const isCurrent = station.id === t.station
+        const reservedPlatform = isCurrent && t.resv?.kind === 'entry' ? (t.resv.platform ?? null) : null
+        const actualPlatform = isCurrent ? (t.platform ?? reservedPlatform) : null
+        rows.push({
+          id: `${t.id}:${station.id}`, trainId: t.id, number: t.number, kind: t.kind, dir: t.dir, station: station.id,
+          destination: this.destination(t.dir), event, plannedTime: event === 'ARRIVAL' ? schedule.arrival : schedule.departure,
+          estimatedTime: this.trainEstimateAt(t, station.id, event), plannedPlatform: leg.platform, platform: actualPlatform,
+          platformStatus: t.platform != null && isCurrent ? 'ACTUAL' : reservedPlatform != null ? 'RESERVED' : 'PLANNED',
+          state: t.state as TrainState, staged: t.staged
+        })
+      }
+    }
+    for (const [previewIndex, spec] of this.preview.entries()) {
+      const start = this.elapsed + Math.max(0, this.nextSpawnIn + previewIndex * interval)
+      const schedule = this.buildSchedule(spec, start)
+      for (const station of this.order(spec.dir)) {
+        const leg = spec.soll[station.id]!
+        const event = leg.exitLine ? 'DEPARTURE' : 'ARRIVAL'
+        rows.push({
+          id: `${spec.id}:${station.id}`, trainId: null, number: spec.number, kind: spec.kind, dir: spec.dir, station: station.id,
+          destination: this.destination(spec.dir), event, plannedTime: event === 'ARRIVAL' ? schedule[station.id]!.arrival : schedule[station.id]!.departure,
+          estimatedTime: event === 'ARRIVAL' ? schedule[station.id]!.arrival : schedule[station.id]!.departure,
+          plannedPlatform: leg.platform, platform: null, platformStatus: 'PLANNED', state: 'SCHEDULED', staged: spec.staged
+        })
+      }
+    }
+    return rows.filter(row => row.plannedTime <= this.elapsed + 180 || row.estimatedTime == null)
+      .sort((a, b) => (a.estimatedTime ?? a.plannedTime) - (b.estimatedTime ?? b.plannedTime))
+      .slice(0, this.netCount * TIMETABLE_HORIZON)
+  }
+
   snapshot(): GameSnapshot {
     const interval = PHASES.find(p => this.elapsed < p.cfg.until)!.cfg.spawn
     return {
@@ -447,6 +556,7 @@ export class GameEngine {
         }
       }),
       incoming: this.preview.map((s, i) => ({ number: s.number, kind: s.kind, dir: s.dir, firstStation: this.order(s.dir)[0]!.id, inSec: Math.max(0, Math.ceil(this.nextSpawnIn + i * interval)) })),
+      timetable: this.timetable(interval),
       backlog: this.pending.length, maxBacklog: this.maxBacklog,
       score: this.score, punctual: this.punctual, departed: this.departed, deviations: this.deviations, handoffs: this.handoffs, forcedBrakes: this.forcedBrakes,
       punctualityPct: this.departed > 0 ? Math.round((this.punctual / this.departed) * 100) : 100,
