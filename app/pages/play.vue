@@ -59,7 +59,7 @@ const sidings = computed(() => myLayout.value?.sidings ?? [])
 function sidingFree(i: number) { return !!stationView.value && stationView.value.sidings[i - 1] == null }
 function park(t: TrainView, sd: number) { sendMsg({ t: 'park', trainId: t.id, siding: sd }) }
 function retrieve(t: TrainView, p: number) { sendMsg({ t: 'retrieve', trainId: t.id, platform: p }) }
-function canRetrieve(t: TrainView, p: number) { return !platformOcc(p) && !platformBlocked(p) && compatible(t, p) }
+function canRetrieve(t: TrainView, p: number) { return !platformOcc(p) && !platformDisabled(p) && compatible(t, p) }
 
 // hover-preview of the exact route an option would set
 const previewPoly = ref<{ x: number, y: number }[] | null>(null)
