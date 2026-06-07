@@ -121,6 +121,7 @@ function pickPreset(p: Preset) { sendMsg({ t: 'setPreset', preset: p }) }
             <span class="fp-bar" :style="{ background: TRAIN_KINDS[t.kind].color }" />
             <span class="fp-num mono">{{ t.number }}</span>
             <span class="fp-route mono">{{ t.entryLine }}→{{ t.exitLine }}</span>
+            <span class="fp-soll mono">Gl {{ t.sollPlatform }}</span>
             <span class="fp-eta mono">{{ t.inSec }}s</span>
           </div>
         </div>
@@ -189,6 +190,7 @@ function pickPreset(p: Preset) { sendMsg({ t: 'setPreset', preset: p }) }
 .fp-strip { display: flex; gap: 10px; overflow: hidden; }
 .fp-card { display: flex; align-items: center; gap: 9px; background: var(--panel-2); border: 2px solid var(--grid); padding: 7px 11px; white-space: nowrap; }
 .fp-bar { width: 6px; height: 20px; } .fp-num { font-weight: 800; } .fp-route { color: var(--muted); } .fp-eta { color: var(--accent); }
+.fp-soll { color: #c8ffd4; border: 1px solid #2f4a35; padding: 0 6px; }
 
 .toasts { position: fixed; bottom: 86px; right: 18px; display: flex; flex-direction: column; gap: 8px; align-items: flex-end; pointer-events: none; }
 .toast { padding: 9px 15px; border: 2px solid var(--grid); background: var(--panel-2); font-weight: 700; }

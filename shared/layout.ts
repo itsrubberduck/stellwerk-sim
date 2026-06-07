@@ -6,6 +6,21 @@
 
 export type Preset = 'KLEIN' | 'MITTEL' | 'GROSS'
 export type Side = 'W' | 'E'
+export type PlatformClass = 'LANG' | 'KURZ' | 'GUETER'
+
+export const PLATFORM_CLASS_META: Record<PlatformClass, { tag: string, label: string, color: string }> = {
+  LANG: { tag: 'L', label: 'Langbahnsteig (ICE)', color: '#34d058' },
+  KURZ: { tag: 'K', label: 'Kurzbahnsteig (IC)', color: '#3bd1ff' },
+  GUETER: { tag: 'G', label: 'Güter-/Durchfahrt', color: '#9aa3ad' }
+}
+
+// which train kinds may use which platform class
+export function kindAllowed(kind: string, cls: PlatformClass): boolean {
+  if (kind === 'SPRINTER' || kind === 'ICE') return cls === 'LANG'
+  if (kind === 'IC') return true
+  if (kind === 'FREIGHT') return cls === 'KURZ' || cls === 'GUETER'
+  return true
+}
 
 export interface Pt { x: number, y: number }
 
@@ -27,6 +42,7 @@ export interface PlatformDef {
   leftX: number
   rightX: number
   centerX: number
+  cls: PlatformClass
 }
 
 export interface RouteDef {
@@ -52,10 +68,10 @@ export interface Layout {
   byId: (id: string) => RouteDef | undefined
 }
 
-export const PRESETS: Record<Preset, { w: number, e: number, p: number, name: string }> = {
-  KLEIN: { w: 1, e: 1, p: 3, name: 'Haltepunkt (klein)' },
-  MITTEL: { w: 2, e: 2, p: 5, name: 'Knoten (mittel)' },
-  GROSS: { w: 3, e: 3, p: 7, name: 'Hauptbahnhof (groß)' }
+export const PRESETS: Record<Preset, { w: number, e: number, p: number, name: string, classes: PlatformClass[] }> = {
+  KLEIN: { w: 1, e: 1, p: 3, name: 'Haltepunkt (klein)', classes: ['LANG', 'LANG', 'GUETER'] },
+  MITTEL: { w: 2, e: 2, p: 5, name: 'Knoten (mittel)', classes: ['LANG', 'LANG', 'LANG', 'KURZ', 'GUETER'] },
+  GROSS: { w: 3, e: 3, p: 7, name: 'Hauptbahnhof (groß)', classes: ['LANG', 'LANG', 'LANG', 'LANG', 'KURZ', 'KURZ', 'GUETER'] }
 }
 
 const VW = 1600
@@ -89,7 +105,7 @@ export function generateLayout(preset: Preset): Layout {
   const platforms: PlatformDef[] = []
   for (let k = 0; k < cfg.p; k++) {
     const y = spread(cfg.p, PLAT_TOP, PLAT_BOT, k)
-    platforms.push({ index: k + 1, y, leftX: XPL, rightX: XPR, centerX: (XPL + XPR) / 2 })
+    platforms.push({ index: k + 1, y, leftX: XPL, rightX: XPR, centerX: (XPL + XPR) / 2, cls: cfg.classes[k] ?? 'LANG' })
   }
 
   const routes: RouteDef[] = []

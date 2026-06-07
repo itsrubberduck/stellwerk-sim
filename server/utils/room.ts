@@ -93,6 +93,9 @@ class Room {
       case 'setExit':
         e.setExit(msg.trainId)
         break
+      case 'cancelResv':
+        e.cancelResv(msg.trainId)
+        break
       case 'ackDisturbance':
         break // client-side dismiss only
       case 'start':

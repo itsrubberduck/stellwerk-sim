@@ -56,6 +56,8 @@ export interface TrainView {
   entryLine: string
   exitLine: string
   platform: number | null
+  sollPlatform: number
+  deviated: boolean
   state: TrainState
   delaySec: number
   progress: number // 0..1 within current throat traversal
@@ -63,6 +65,8 @@ export interface TrainView {
   connectionId: string | null
   connectionMet: boolean
   routeId: string | null
+  resvKind: 'entry' | 'exit' | null
+  resvPlatform: number | null
 }
 
 export interface PlayerView {
@@ -82,7 +86,7 @@ export interface GameSnapshot {
   trains: TrainView[]
   disturbances: DisturbanceView[]
   globalStop: boolean
-  incoming: { number: string, kind: TrainKind, entryLine: string, exitLine: string, inSec: number }[]
+  incoming: { number: string, kind: TrainKind, entryLine: string, exitLine: string, sollPlatform: number, inSec: number }[]
   backlog: number
   maxBacklog: number
   score: number
@@ -104,6 +108,7 @@ export type ClientMessage =
   | { t: 'releaseSector', sector: string }
   | { t: 'setEntry', trainId: string, platform: number }
   | { t: 'setExit', trainId: string }
+  | { t: 'cancelResv', trainId: string }
   | { t: 'ackDisturbance', id: string }
   | { t: 'start' }
   | { t: 'restart' }

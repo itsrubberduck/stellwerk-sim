@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 import { TRAIN_KINDS, type GameSnapshot, type TrainView } from '../../shared/game'
-import { generateLayout, type Layout, type Pt, type RouteDef } from '../../shared/layout'
+import { PLATFORM_CLASS_META, generateLayout, type Layout, type Pt } from '../../shared/layout'
 
 const props = defineProps<{ snap: GameSnapshot }>()
 const canvas = ref<HTMLCanvasElement | null>(null)
@@ -55,8 +55,21 @@ function draw() {
   for (const pf of L.platforms) {
     line(ctx, { x: pf.leftX, y: pf.y }, { x: pf.rightX, y: pf.y }, '#5a636e', 6)
     if (snap.platformDisabled[pf.index - 1]) hatch(ctx, pf.leftX, pf.rightX, pf.y)
-    text(ctx, `Gl ${pf.index}`, pf.leftX - 12, pf.y, '#8b97a3', 22, 'right')
+    text(ctx, `Gl ${pf.index}`, pf.leftX - 14, pf.y - 9, '#8b97a3', 22, 'right')
+    const m = PLATFORM_CLASS_META[pf.cls]
+    text(ctx, m.tag, pf.leftX - 14, pf.y + 11, m.color, 16, 'right')
   }
+
+  // ---- reserved (vorgemerkte) routes: dashed amber ----
+  ctx.setLineDash([10, 8])
+  for (const t of snap.trains) {
+    if (!t.resvKind) continue
+    const r = t.resvKind === 'entry' ? (t.resvPlatform != null ? L.entry(t.entryLine, t.resvPlatform) : undefined)
+      : (t.platform != null ? L.exit(t.exitLine, t.platform) : undefined)
+    if (!r) continue
+    for (let i = 0; i < r.poly.length - 1; i++) line(ctx, r.poly[i]!, r.poly[i + 1]!, '#ffb020', 3)
+  }
+  ctx.setLineDash([])
 
   // ---- lit active routes ----
   for (const t of snap.trains) {
