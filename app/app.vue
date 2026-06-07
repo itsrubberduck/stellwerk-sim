@@ -22,13 +22,11 @@
 
 html, body, #__nuxt {
   margin: 0;
-  height: 100%;
+  min-height: 100%;
   background: var(--bg);
   color: var(--text);
   font-family: 'DIN Alternate', 'Roboto Condensed', 'Segoe UI', system-ui, sans-serif;
 }
-
-body { overflow: hidden; }
 
 .mono {
   font-family: ui-monospace, 'SF Mono', 'Roboto Mono', 'Consolas', monospace;

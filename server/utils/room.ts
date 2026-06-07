@@ -104,6 +104,9 @@ class Room {
       case 'setSolo':
         e.setSolo(msg.solo)
         break
+      case 'setPreset':
+        e.setPreset(msg.preset)
+        break
     }
     this.sendSnapshot(peer)
   }
