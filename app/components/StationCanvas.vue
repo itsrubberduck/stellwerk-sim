@@ -169,15 +169,22 @@ function text(ctx: CanvasRenderingContext2D, s: string, x: number, y: number, c:
 function diamond(ctx: CanvasRenderingContext2D, p: Pt, r: number, c: string) { ctx.fillStyle = c; ctx.beginPath(); ctx.moveTo(p.x, p.y - r); ctx.lineTo(p.x + r, p.y); ctx.lineTo(p.x, p.y + r); ctx.lineTo(p.x - r, p.y); ctx.closePath(); ctx.fill() }
 function buffer(ctx: CanvasRenderingContext2D, x: number, y: number) { ctx.strokeStyle = '#8b97a3'; ctx.lineWidth = 4; ctx.beginPath(); ctx.moveTo(x, y - 11); ctx.lineTo(x, y + 11); ctx.stroke() }
 function hatch(ctx: CanvasRenderingContext2D, x0: number, x1: number, y: number) { ctx.save(); ctx.strokeStyle = '#ffb020'; ctx.lineWidth = 4; for (let x = x0; x < x1; x += 22) { ctx.beginPath(); ctx.moveTo(x, y - 11); ctx.lineTo(x + 11, y + 11); ctx.stroke() } ctx.restore() }
+function markerLabel(t: TrainView): string {
+  if (t.kind === 'TGV') return 'TGV'
+  if (t.kind === 'CD') return 'ČD'
+  if (t.kind === 'SBAHN' || t.kind === 'V60' || t.kind === 'V100') return t.number.split(' ')[0] ?? t.number
+  return t.number.split(' ')[1] ?? t.number
+}
 function marker(ctx: CanvasRenderingContext2D, p: Pt, t: TrainView, sel: boolean) {
   const meta = TRAIN_KINDS[t.kind]
-  const w = props.compact ? 30 : 36, h = props.compact ? 15 : 19
+  const longLabel = t.kind === 'V100'
+  const w = props.compact ? (longLabel ? 36 : 30) : (longLabel ? 42 : 36), h = props.compact ? 15 : 19
   if (sel) { ctx.strokeStyle = '#36d6ff'; ctx.lineWidth = 3; ctx.strokeRect(p.x - w / 2 - 3, p.y - h / 2 - 3, w + 6, h + 6) }
   ctx.fillStyle = t.state === 'STUCK' ? '#ff3b30' : meta.color
   ctx.fillRect(p.x - w / 2, p.y - h / 2, w, h)
   ctx.strokeStyle = '#06080a'; ctx.lineWidth = 2; ctx.strokeRect(p.x - w / 2, p.y - h / 2, w, h) // outline to pop on dark track
-  ctx.fillStyle = '#0c0f12'; ctx.font = `800 ${props.compact ? 12 : 13}px ui-monospace, monospace`; ctx.textAlign = 'center'; ctx.textBaseline = 'middle'
-  ctx.fillText(t.state === 'STUCK' ? 'HALT' : (t.number.split(' ')[1] ?? t.number), p.x, p.y)
+  ctx.fillStyle = '#0c0f12'; ctx.font = `800 ${longLabel ? 10 : props.compact ? 12 : 13}px ui-monospace, monospace`; ctx.textAlign = 'center'; ctx.textBaseline = 'middle'
+  ctx.fillText(t.state === 'STUCK' ? 'HALT' : markerLabel(t), p.x, p.y)
   if (!props.compact && (t.state === 'DWELL' || t.state === 'READY_DEPART')) text(ctx, t.number, p.x, p.y - h, t.dwellLeft > 0 ? '#8b97a3' : '#ffb020', 16, 'center')
 }
 
