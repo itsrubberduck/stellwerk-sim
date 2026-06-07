@@ -212,18 +212,21 @@ function corridorSidings(): SidingDef[] {
 }
 
 // ---- corridor station types (selectable per station) ----
-export type CorridorKind = 'DURCHGANG' | 'KNOTEN' | 'ABZWEIG' | 'GROSS' | 'VORORT' | 'GUETERBF'
+export type CorridorKind = 'DURCHGANG' | 'KNOTEN' | 'ABZWEIG' | 'GROSS' | 'VORORT' | 'GUETERBF' | 'DREITEILER' | 'VERZWEIGUNG' | 'TIEF'
 const KIND_CONF: Record<CorridorKind, { p: number, classes: PlatformClass[] }> = {
-  DURCHGANG: { p: 5, classes: ['LANG', 'LANG', 'LANG', 'KURZ', 'GUETER'] },
-  KNOTEN:    { p: 6, classes: ['LANG', 'LANG', 'LANG', 'LANG', 'KURZ', 'GUETER'] },
-  ABZWEIG:   { p: 6, classes: ['LANG', 'LANG', 'LANG', 'LANG', 'KURZ', 'GUETER'] },
-  GROSS:     { p: 8, classes: ['LANG', 'LANG', 'LANG', 'LANG', 'LANG', 'KURZ', 'KURZ', 'GUETER'] },
-  VORORT:    { p: 3, classes: ['LANG', 'LANG', 'KURZ'] },
-  GUETERBF:  { p: 5, classes: ['LANG', 'KURZ', 'LANG', 'GUETER', 'GUETER'] },
+  DURCHGANG:   { p: 5, classes: ['LANG', 'LANG', 'LANG', 'KURZ', 'GUETER'] },
+  KNOTEN:      { p: 6, classes: ['LANG', 'LANG', 'LANG', 'LANG', 'KURZ', 'GUETER'] },
+  ABZWEIG:     { p: 6, classes: ['LANG', 'LANG', 'LANG', 'LANG', 'KURZ', 'GUETER'] },
+  GROSS:       { p: 8, classes: ['LANG', 'LANG', 'LANG', 'LANG', 'LANG', 'KURZ', 'KURZ', 'GUETER'] },
+  VORORT:      { p: 3, classes: ['LANG', 'LANG', 'KURZ'] },
+  GUETERBF:    { p: 5, classes: ['LANG', 'KURZ', 'LANG', 'GUETER', 'GUETER'] },
+  DREITEILER:  { p: 8, classes: ['LANG', 'LANG', 'LANG', 'KURZ', 'KURZ', 'KURZ', 'KURZ', 'GUETER'] },
+  VERZWEIGUNG: { p: 7, classes: ['LANG', 'LANG', 'LANG', 'LANG', 'KURZ', 'KURZ', 'GUETER'] },
+  TIEF:        { p: 7, classes: ['LANG', 'LANG', 'LANG', 'KURZ', 'LANG', 'LANG', 'GUETER'] },
 }
 export const CORRIDOR_KIND_LABEL: Record<string, string> = {
   DURCHGANG: 'Durchgang', KNOTEN: 'Knoten', ABZWEIG: 'Abzweig', GROSS: 'Großbf', KOPF: 'Kopfbahnhof',
-  VORORT: 'Vorortbf', GUETERBF: 'Güterbf'
+  VORORT: 'Vorortbf', GUETERBF: 'Güterbf', DREITEILER: 'Dreiteiler', VERZWEIGUNG: 'Verzweig-Bf', TIEF: 'Tiefbf'
 }
 
 // Non-uniform platform Y positions — creates natural clusters instead of ruler-grid
@@ -278,6 +281,91 @@ export function buildCorridorStation(name: string, kind: CorridorKind, wCount: n
       const n = l.side === 'W' ? wCount : eCount
       return Math.abs(norm(n, l.index) - norm(3, p.index - 1)) <= 0.75
     }
+    return finish('KNOTEN', name, 'THROUGH', ['W', 'E'], lines, platforms, reach, corridorSidings())
+  }
+
+  // --- DREITEILER: Three-cluster station (Express / Regional / Lokal) ---
+  // Inspired by Hamburg Hbf / Frankfurt (Main) Hbf: three distinct platform halls
+  // with visible gaps between them — express, regional, and local tracks.
+  if (kind === 'DREITEILER') {
+    for (let i = 0; i < wCount; i++) { const y = spread(wCount, LINE_TOP, LINE_BOT, i); lines.push(mkLine(`W${i + 1}`, 'W', `West ${i + 1}`, i, y, y)) }
+    for (let j = 0; j < eCount; j++) { const y = spread(eCount, LINE_TOP, LINE_BOT, j); lines.push(mkLine(`E${j + 1}`, 'E', `Ost ${j + 1}`, j, y, y)) }
+    // Express cluster (top)
+    platforms.push({ index: 1, y: 162, leftX: 568, rightX: 1032, centerX: 800, cls: 'LANG',  openL: true, openR: true })
+    platforms.push({ index: 2, y: 255, leftX: 582, rightX: 1018, centerX: 800, cls: 'LANG',  openL: true, openR: true })
+    platforms.push({ index: 3, y: 342, leftX: 574, rightX: 1026, centerX: 800, cls: 'LANG',  openL: true, openR: true })
+    // Regional cluster (~110px gap below express)
+    platforms.push({ index: 4, y: 452, leftX: 594, rightX: 1006, centerX: 800, cls: 'KURZ',  openL: true, openR: true })
+    platforms.push({ index: 5, y: 524, leftX: 602, rightX:  998, centerX: 800, cls: 'KURZ',  openL: true, openR: true })
+    // Local/S-Bahn cluster (~86px gap below regional, narrower tracks)
+    platforms.push({ index: 6, y: 610, leftX: 644, rightX: 972, centerX: 808, cls: 'KURZ',   openL: true, openR: true })
+    platforms.push({ index: 7, y: 658, leftX: 652, rightX: 964, centerX: 808, cls: 'KURZ',   openL: true, openR: true })
+    platforms.push({ index: 8, y: 706, leftX: 640, rightX: 954, centerX: 797, cls: 'GUETER', openL: true, openR: true })
+    const reach = (l: LineDef, p: PlatformDef) => {
+      const n = l.side === 'W' ? wCount : eCount
+      const lp = norm(n, l.index)
+      if (p.index <= 3) return lp <= 0.60
+      if (p.index <= 5) return n <= 2 ? true : (lp >= 0.25 && lp <= 0.80)
+      return n <= 2 ? lp >= 0.45 : lp >= 0.55
+    }
+    return finish('KNOTEN', name, 'THROUGH', ['W', 'E'], lines, platforms, reach, corridorSidings())
+  }
+
+  // --- VERZWEIGUNG: Split-branch station with dedicated platform groups per branch ---
+  // East side fans into two distinct branches (north arc up, south arc down), each serving
+  // its own platform cluster. Middle platform is shared by all.
+  // Inspired by Würzburg Hbf (Frankfurt / Nürnberg ICE split) and Rosenheim Hbf.
+  if (kind === 'VERZWEIGUNG') {
+    for (let i = 0; i < wCount; i++) { const y = spread(wCount, LINE_TOP + 20, LINE_BOT - 20, i); lines.push(mkLine(`W${i + 1}`, 'W', `West ${i + 1}`, i, y, y)) }
+    const northE = Math.max(1, Math.floor(eCount / 2))
+    const southE = eCount - northE
+    for (let j = 0; j < northE; j++) {
+      const y = spread(northE, 168, 360, j)
+      lines.push(mkLine(`E${j + 1}`, 'E', `Nord ${j + 1}`, j, y, Math.max(14, y - 148)))
+    }
+    for (let j = 0; j < southE; j++) {
+      const y = spread(southE, 524, 702, j)
+      lines.push(mkLine(`E${northE + j + 1}`, 'E', `Süd ${j + 1}`, northE + j, y, Math.min(VH - 14, y + 148)))
+    }
+    // North branch platforms
+    platforms.push({ index: 1, y: 168, leftX: 572, rightX: 1028, centerX: 800, cls: 'LANG',  openL: true, openR: true })
+    platforms.push({ index: 2, y: 268, leftX: 560, rightX: 1016, centerX: 788, cls: 'LANG',  openL: true, openR: true })
+    platforms.push({ index: 3, y: 360, leftX: 578, rightX: 1022, centerX: 800, cls: 'LANG',  openL: true, openR: true })
+    // Middle: served by both branches
+    platforms.push({ index: 4, y: 440, leftX: 582, rightX: 1018, centerX: 800, cls: 'LANG',  openL: true, openR: true })
+    // South branch platforms
+    platforms.push({ index: 5, y: 524, leftX: 566, rightX: 1010, centerX: 788, cls: 'KURZ',  openL: true, openR: true })
+    platforms.push({ index: 6, y: 615, leftX: 572, rightX: 1016, centerX: 794, cls: 'KURZ',  openL: true, openR: true })
+    platforms.push({ index: 7, y: 702, leftX: 558, rightX:  998, centerX: 778, cls: 'GUETER', openL: true, openR: true })
+    const reach = (l: LineDef, p: PlatformDef) => {
+      if (l.side === 'W') return Math.abs(norm(wCount, l.index) - norm(7, p.index - 1)) <= 0.55
+      if (p.index === 4) return true
+      return (l.index < northE) ? p.index <= 3 : p.index >= 5
+    }
+    return finish('KNOTEN', name, 'THROUGH', ['W', 'E'], lines, platforms, reach, corridorSidings())
+  }
+
+  // --- TIEF: Two-level station (above ground + underground hall) ---
+  // Upper lines/platforms: spacious intercity tracks. Lower lines/platforms: narrower
+  // underground through-tracks. Each level is fully isolated from the other.
+  // Inspired by Berlin Hbf Tiefbahnhof and the Stuttgart 21 concept.
+  if (kind === 'TIEF') {
+    const aboveW = Math.max(1, Math.ceil(wCount / 2)), belowW = wCount - aboveW
+    const aboveE = Math.max(1, Math.ceil(eCount / 2)), belowE = eCount - aboveE
+    for (let i = 0; i < aboveW; i++) { const y = spread(aboveW, 168, 490, i); lines.push(mkLine(`W${i + 1}`, 'W', `West ${i + 1}`, i, y, y)) }
+    for (let i = 0; i < belowW; i++) { const y = spread(belowW, 558, 694, i); lines.push(mkLine(`W${aboveW + i + 1}`, 'W', `U-West ${i + 1}`, aboveW + i, y, y)) }
+    for (let j = 0; j < aboveE; j++) { const y = spread(aboveE, 168, 490, j); lines.push(mkLine(`E${j + 1}`, 'E', `Ost ${j + 1}`, j, y, y)) }
+    for (let j = 0; j < belowE; j++) { const y = spread(belowE, 558, 694, j); lines.push(mkLine(`E${aboveE + j + 1}`, 'E', `U-Ost ${j + 1}`, aboveE + j, y, y)) }
+    // Level 1: above ground — wider, standard-height platforms
+    platforms.push({ index: 1, y: 172, leftX: 572, rightX: 1028, centerX: 800, cls: 'LANG',  openL: true, openR: true })
+    platforms.push({ index: 2, y: 285, leftX: 564, rightX: 1020, centerX: 792, cls: 'LANG',  openL: true, openR: true })
+    platforms.push({ index: 3, y: 390, leftX: 576, rightX: 1024, centerX: 800, cls: 'LANG',  openL: true, openR: true })
+    platforms.push({ index: 4, y: 490, leftX: 588, rightX: 1012, centerX: 800, cls: 'KURZ',  openL: true, openR: true })
+    // Level 2: underground — narrower, compressed
+    platforms.push({ index: 5, y: 562, leftX: 634, rightX: 966,  centerX: 800, cls: 'LANG',  openL: true, openR: true })
+    platforms.push({ index: 6, y: 628, leftX: 646, rightX: 954,  centerX: 800, cls: 'LANG',  openL: true, openR: true })
+    platforms.push({ index: 7, y: 694, leftX: 652, rightX: 948,  centerX: 800, cls: 'GUETER', openL: true, openR: true })
+    const reach = (l: LineDef, p: PlatformDef) => (l.y < 520) === (p.index <= 4)
     return finish('KNOTEN', name, 'THROUGH', ['W', 'E'], lines, platforms, reach, corridorSidings())
   }
 

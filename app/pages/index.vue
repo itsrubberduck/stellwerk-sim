@@ -6,7 +6,7 @@ import { PHASE_LABEL, avatarProfile, type TrainView } from '../../shared/game'
 import { CORRIDOR_KIND_LABEL } from '../../shared/layout'
 import { generateNetwork, type StationKind } from '../../shared/network'
 
-const THROUGH_KINDS: StationKind[] = ['VORORT', 'DURCHGANG', 'KNOTEN', 'ABZWEIG', 'GROSS', 'GUETERBF']
+const THROUGH_KINDS: StationKind[] = ['VORORT', 'DURCHGANG', 'KNOTEN', 'ABZWEIG', 'GROSS', 'GUETERBF', 'DREITEILER', 'VERZWEIGUNG', 'TIEF']
 
 const { snapshot, connected, toasts } = useGame('screen')
 
