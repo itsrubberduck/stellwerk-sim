@@ -113,7 +113,7 @@ export class GameEngine {
     this.stations = new Map(this.net.stations.map(s => [s.id, new Station(s)]))
     this.links = new Map(this.net.links.map(l => [l.id, { def: l, occupant: Array(l.tracks).fill(null) }]))
   }
-  get maxBacklog() { return 14 } // sidings buffer overflow -> more lenient
+  get maxBacklog() { return Math.max(14, this.netCount * 8) } // scales with network; sidings buffer further
 
   // ---------- lifecycle ----------
   setNetwork(count: number) {
@@ -132,6 +132,7 @@ export class GameEngine {
   }
   start() { if (this.phase !== 'LOBBY' && this.phase !== 'GAMEOVER') return; this.reset(false); this.phase = 'RUHE'; this.nextSpawnIn = 4; this.refillPreview() }
   restart() { this.reset(true) }
+  abort() { this.reset(true) } // stop the running game anytime -> back to lobby (keeps net/types/players)
   private reset(toLobby: boolean) {
     this.elapsed = 0
     for (const s of this.stations.values()) { s.platforms.fill(null); s.platformDisabled.fill(false); s.sidings.fill(null); s.sideDisabled = { W: false, E: false } }

@@ -108,6 +108,9 @@ class Room {
       case 'restart':
         e.restart()
         break
+      case 'abort':
+        e.abort()
+        break
       case 'setSolo':
         e.setSolo(msg.solo)
         break

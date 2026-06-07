@@ -60,6 +60,21 @@ function sidingFree(i: number) { return !!stationView.value && stationView.value
 function park(t: TrainView, sd: number) { sendMsg({ t: 'park', trainId: t.id, siding: sd }) }
 function retrieve(t: TrainView, p: number) { sendMsg({ t: 'retrieve', trainId: t.id, platform: p }) }
 function canRetrieve(t: TrainView, p: number) { return !platformOcc(p) && !platformBlocked(p) && compatible(t, p) }
+
+// hover-preview of the exact route an option would set
+const previewPoly = ref<{ x: number, y: number }[] | null>(null)
+function sidingDef(i: number) { return myLayout.value?.sidings[i - 1] }
+function platDef(i: number) { return myLayout.value?.platforms[i - 1] }
+function parkPath(pIdx: number, sIdx: number) {
+  const L = myLayout.value; const pf = platDef(pIdx), sd = sidingDef(sIdx); if (!L || !pf || !sd) return null
+  const refY = Math.max(...L.platforms.map(p => p.y))
+  return [{ x: pf.centerX, y: pf.y }, { x: sd.leftX, y: refY }, { x: sd.leftX, y: sd.y }, { x: sd.centerX, y: sd.y }]
+}
+function previewEntry(t: TrainView, p: number) { previewPoly.value = myLayout.value?.entry(t.arrLine, p)?.poly ?? null }
+function previewExit(t: TrainView, l: string) { previewPoly.value = (t.platform != null ? myLayout.value?.exit(l, t.platform)?.poly : null) ?? null }
+function previewPark(t: TrainView, s: number) { previewPoly.value = t.platform != null ? parkPath(t.platform, s) : null }
+function previewRetrieve(t: TrainView, p: number) { previewPoly.value = t.sidingIndex != null ? parkPath(p, t.sidingIndex) : null }
+function clearPreview() { previewPoly.value = null }
 const platforms = computed(() => myLayout.value?.platforms ?? [])
 const menuPos = computed(() => sel.value ? { left: Math.min(sel.value.x, (typeof window !== 'undefined' ? window.innerWidth : 1000) - 280) + 'px', top: Math.min(sel.value.y, (typeof window !== 'undefined' ? window.innerHeight : 800) - 320) + 'px' } : {})
 </script>
@@ -102,7 +117,7 @@ const menuPos = computed(() => sel.value ? { left: Math.min(sel.value.x, (typeof
 
       <div class="board" @pointerdown.self="sel = null">
         <StationCanvas v-if="myLayout && stationView" :layout="myLayout" :station="stationView" :trains="myTrains"
-          interactive :sel-id="sel?.id ?? null" :hover-id="hoverId"
+          interactive :sel-id="sel?.id ?? null" :hover-id="hoverId" :preview-poly="previewPoly"
           @train-click="onTrainClick" @train-hover="hoverId = $event" @bg="sel = null" />
         <div class="hint-tip muted">Zug anklicken zum Disponieren · Hover zeigt Soll-Route</div>
 
@@ -128,7 +143,8 @@ const menuPos = computed(() => sel.value ? { left: Math.min(sel.value.x, (typeof
             <div class="opt-grid">
               <button v-for="pf in platforms" :key="pf.index" class="key opt"
                 :class="{ soll: pf.index === selTrain.sollPlatform, bad: !canEntry(selTrain, pf.index), occ: platformOcc(pf.index) }"
-                :disabled="!canEntry(selTrain, pf.index)" @click="reserveEntry(selTrain, pf.index)">
+                :disabled="!canEntry(selTrain, pf.index)" @click="reserveEntry(selTrain, pf.index)"
+                @mouseenter="previewEntry(selTrain, pf.index)" @mouseleave="clearPreview()">
                 Gl {{ pf.index }} <span class="tag" :style="{ color: PLATFORM_CLASS_META[pf.cls].color }">{{ PLATFORM_CLASS_META[pf.cls].tag }}</span>
               </button>
             </div>
@@ -139,13 +155,15 @@ const menuPos = computed(() => sel.value ? { left: Math.min(sel.value.x, (typeof
             <div v-if="exitOptions(selTrain).length" class="menu-label">Ausfahrt / Übergabe über:</div>
             <div class="opt-list">
               <button v-for="l in exitOptions(selTrain)" :key="l.id" class="key opt wide"
-                :class="{ soll: l.id === selTrain.sollExitLine, bad: linkBusy(l.id) }" @click="reserveExit(selTrain, l.id)">
+                :class="{ soll: l.id === selTrain.sollExitLine, bad: linkBusy(l.id) }" @click="reserveExit(selTrain, l.id)"
+                @mouseenter="previewExit(selTrain, l.id)" @mouseleave="clearPreview()">
                 {{ exitLabel(l.id) }}<span v-if="linkBusy(l.id)" class="muted"> · belegt</span>
               </button>
             </div>
             <div v-if="sidings.length" class="menu-label">Abstellen (Rangieren):</div>
             <div v-if="sidings.length" class="opt-grid">
-              <button v-for="sd in sidings" :key="sd.index" class="key opt park" :disabled="!sidingFree(sd.index)" @click="park(selTrain, sd.index)">Abst {{ sd.index }}</button>
+              <button v-for="sd in sidings" :key="sd.index" class="key opt park" :disabled="!sidingFree(sd.index)" @click="park(selTrain, sd.index)"
+                @mouseenter="previewPark(selTrain, sd.index)" @mouseleave="clearPreview()">Abst {{ sd.index }}</button>
             </div>
             <div v-if="selTrain.state === 'DWELL'" class="muted sm">hält noch {{ selTrain.dwellLeft }}s (vormerkbar)</div>
           </template>
@@ -156,7 +174,8 @@ const menuPos = computed(() => sel.value ? { left: Math.min(sel.value.x, (typeof
             <div class="opt-grid">
               <button v-for="pf in platforms" :key="pf.index" class="key opt"
                 :class="{ soll: pf.index === selTrain.sollPlatform, occ: platformOcc(pf.index), bad: !compatible(selTrain, pf.index) }"
-                :disabled="!canRetrieve(selTrain, pf.index)" @click="retrieve(selTrain, pf.index)">
+                :disabled="!canRetrieve(selTrain, pf.index)" @click="retrieve(selTrain, pf.index)"
+                @mouseenter="previewRetrieve(selTrain, pf.index)" @mouseleave="clearPreview()">
                 Gl {{ pf.index }} <span class="tag" :style="{ color: PLATFORM_CLASS_META[pf.cls].color }">{{ PLATFORM_CLASS_META[pf.cls].tag }}</span>
               </button>
             </div>

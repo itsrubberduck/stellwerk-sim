@@ -49,6 +49,8 @@ export interface PlatformDef {
   openR: boolean
   barL?: number // platform-edge extent (varies by length/class + stagger); set in finish()
   barR?: number
+  yL?: number // angled tracks: y at left / right end (set in finish); pf.y stays the centre
+  yR?: number
 }
 
 export interface SidingDef { index: number, y: number, leftX: number, rightX: number, centerX: number }
@@ -121,8 +123,9 @@ function buildRoutes(lines: LineDef[], platforms: PlatformDef[], reach: (l: Line
     for (const pf of platforms) {
       if (!reach(line, pf)) continue
       const open = line.side === 'W' ? pf.leftX : pf.rightX
+      const openY = line.side === 'W' ? (pf.yL ?? pf.y) : (pf.yR ?? pf.y)
       const eArr: Pt = { x: line.stubX, y: line.arrY }
-      const oPt: Pt = { x: open, y: pf.y }
+      const oPt: Pt = { x: open, y: openY }
       const entryDiag: [Pt, Pt] = [eArr, oPt]
       const entryPoly: Pt[] = [{ x: line.edgeX, y: line.edgeY - GAP }, eArr, oPt, { x: pf.centerX, y: pf.y }]
       const eId = `e:${line.id}:${pf.index}`
@@ -182,8 +185,9 @@ export function generateLayout(preset: Preset): Layout {
 
 function finish(preset: Preset, name: string, type: StationType, sides: Side[], lines: LineDef[], platforms: PlatformDef[], reach: (l: LineDef, p: PlatformDef) => boolean, sidings: SidingDef[] = []): Layout {
   // organic variety: asymmetric switch positions, staggered platforms, variable bar lengths
+  // asymmetric switch positions in the throat; platforms stay parallel (real Bf)
   lines.forEach((l, i) => { l.stubX += (l.side === 'W' ? 1 : -1) * (i % 2 ? 16 : -11) })
-  platforms.forEach((pf, i) => { pf.y += (i % 2 ? 13 : -9) })
+  platforms.forEach((pf, i) => { pf.y += (i % 2 ? 11 : -7) })
   for (const pf of platforms) {
     const f = pf.cls === 'KURZ' ? 0.5 : pf.cls === 'GUETER' ? 0.78 : 1.0
     const span = pf.rightX - pf.leftX, len = span * f
@@ -202,8 +206,8 @@ function finish(preset: Preset, name: string, type: StationType, sides: Side[], 
 
 function corridorSidings(): SidingDef[] {
   return [
-    { index: 1, y: 766, leftX: PL + 150, rightX: PR - 150, centerX: CENTER },
-    { index: 2, y: 812, leftX: PL + 150, rightX: PR - 150, centerX: CENTER }
+    { index: 1, y: 770, leftX: PL + 120, rightX: PR - 180, centerX: (PL + 120 + PR - 180) / 2 },
+    { index: 2, y: 816, leftX: PL + 180, rightX: PR - 120, centerX: (PL + 180 + PR - 120) / 2 }
   ]
 }
 

@@ -34,6 +34,7 @@ const linkBetween = (aId: string) => s.value?.links.find(l => l.a === aId)
 
 function start() { sendMsg({ t: 'start' }) }
 function restart() { sendMsg({ t: 'restart' }) }
+function abort() { if (confirm('Betrieb abbrechen und zurück zur Lobby?')) sendMsg({ t: 'abort' }) }
 function setCount(n: number) { sendMsg({ t: 'setNetwork', count: n }) }
 </script>
 
@@ -89,6 +90,7 @@ function setCount(n: number) { sendMsg({ t: 'setNetwork', count: n }) }
         <div class="stat"><div class="num" :class="{ low: (s?.backlog ?? 0) > (s?.maxBacklog ?? 9) * 0.6 }">{{ s?.backlog }}/{{ s?.maxBacklog }}</div><div class="lbl">Rückstau</div></div>
         <div class="spacer" />
         <div class="stat"><div class="num">{{ fmtTime(s?.elapsed ?? 0) }}</div><div class="lbl">{{ PHASE_LABEL[phase] }}</div></div>
+        <button class="key danger abort-btn" @click="abort">⊗ Abbrechen</button>
       </header>
 
       <div class="corridor">
@@ -146,6 +148,7 @@ function setCount(n: number) { sendMsg({ t: 'setNetwork', count: n }) }
 .hud { display: flex; align-items: center; gap: 22px; padding: 10px 22px; background: var(--panel); border-bottom: 2px solid var(--grid); flex-wrap: wrap; }
 .stat { text-align: center; } .stat .num { font-size: 24px; font-weight: 800; font-family: ui-monospace, monospace; } .stat.big .num { font-size: 36px; }
 .stat .num.low { color: var(--red); } .stat .lbl { font-size: 11px; color: var(--muted); text-transform: uppercase; letter-spacing: 0.06em; } .spacer { flex: 1; }
+.abort-btn { padding: 9px 12px; font-size: 12px; }
 
 .corridor { flex: 1; min-height: 0; display: flex; align-items: stretch; padding: 12px; gap: 0; }
 .st-panel { flex: 1; min-width: 0; display: flex; flex-direction: column; border: 2px solid var(--grid); background: #0e1318; }

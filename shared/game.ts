@@ -91,6 +91,7 @@ export type ClientMessage =
   | { t: 'cancelResv', trainId: string }
   | { t: 'start' }
   | { t: 'restart' }
+  | { t: 'abort' }
   | { t: 'setSolo', solo: boolean }
   | { t: 'setNetwork', count: number }
   | { t: 'setStationType', index: number, kind: string }
