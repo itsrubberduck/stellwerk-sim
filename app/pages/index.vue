@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue'
 import QRCode from 'qrcode'
-import { useGame, sendMsg } from '../composables/useGame'
+import { useGame, sendMsg, setGameRoom } from '../composables/useGame'
 import { PHASE_LABEL, avatarProfile, type TrainView } from '../../shared/game'
 import { CORRIDOR_KIND_LABEL } from '../../shared/layout'
 import { generateNetwork, type StationKind } from '../../shared/network'
@@ -10,9 +10,10 @@ const THROUGH_KINDS: StationKind[] = ['DURCHGANG', 'KNOTEN', 'ABZWEIG', 'GROSS']
 
 const { snapshot, connected, toasts } = useGame('screen')
 
-const joinUrl = ref(''); const qr = ref('')
+const joinUrl = ref(''); const qr = ref(''); const roomInput = ref('')
 watch(() => snapshot.value?.roomCode, async (code) => {
   if (!code) return
+  roomInput.value = code
   joinUrl.value = `${location.origin}/play?room=${code}`
   qr.value = await QRCode.toDataURL(joinUrl.value, { margin: 1, width: 320, color: { dark: '#0c0f12', light: '#e7edf2' } })
 }, { immediate: true })
@@ -40,6 +41,7 @@ function start() { sendMsg({ t: 'start' }) }
 function restart() { sendMsg({ t: 'restart' }) }
 function abort() { if (confirm('Betrieb abbrechen und zurück zur Lobby?')) sendMsg({ t: 'abort' }) }
 function setCount(n: number) { sendMsg({ t: 'setNetwork', count: n }) }
+function openRoom() { setGameRoom(roomInput.value) }
 </script>
 
 <template>
@@ -63,7 +65,11 @@ function setCount(n: number) { sendMsg({ t: 'setNetwork', count: n }) }
           <div>
             <div class="muted small">Laptop ins selbe WLAN, öffnen:</div>
             <div class="url mono">{{ joinUrl }}</div>
-            <div class="code">RAUM <b class="mono">{{ s?.roomCode }}</b></div>
+            <div class="muted small room-label">Raum öffnen oder neu anlegen:</div>
+            <div class="room-picker">
+              <input v-model="roomInput" class="room-input mono" maxlength="10" autocomplete="off" @keyup.enter="openRoom">
+              <button class="key" @click="openRoom">Öffnen</button>
+            </div>
           </div>
         </div>
 
@@ -100,6 +106,10 @@ function setCount(n: number) { sendMsg({ t: 'setNetwork', count: n }) }
         <div class="stat"><div class="num" :class="{ low: (s?.deviations ?? 0) > 0 }">{{ s?.deviations }}</div><div class="lbl">Umleitungen</div></div>
         <div class="stat"><div class="num" :class="{ low: (s?.backlog ?? 0) > (s?.maxBacklog ?? 9) * 0.6 }">{{ s?.backlog }}/{{ s?.maxBacklog }}</div><div class="lbl">Rückstau</div></div>
         <div class="spacer" />
+        <div class="room-hud">
+          <input v-model="roomInput" class="room-input mono compact" maxlength="10" autocomplete="off" aria-label="Raumcode" @keyup.enter="openRoom">
+          <button class="key" @click="openRoom">Raum</button>
+        </div>
         <div class="stat"><div class="num">{{ fmtTime(s?.elapsed ?? 0) }}</div><div class="lbl">{{ PHASE_LABEL[phase] }}</div></div>
         <button class="key danger abort-btn" @click="abort">⊗ Abbrechen</button>
       </header>
@@ -155,7 +165,12 @@ function setCount(n: number) { sendMsg({ t: 'setNetwork', count: n }) }
 .cnt { width: 56px; height: 56px; font-size: 20px; } .cnt.on { border-color: var(--accent); background: #2a2410; }
 .join { display: flex; gap: 22px; align-items: center; margin: 22px 0; }
 .qr { width: clamp(130px, 13vw, 190px); border: 6px solid #e7edf2; background: #e7edf2; }
-.url { color: var(--accent); word-break: break-all; } .code { margin-top: 8px; } .code b { color: var(--accent); font-size: 26px; }
+.url { color: var(--accent); word-break: break-all; }
+.room-label { margin-top: 12px; }
+.room-picker, .room-hud { display: flex; align-items: center; gap: 8px; }
+.room-input { width: 150px; padding: 10px 12px; border: 2px solid var(--grid); background: #0d1115; color: var(--accent); font-size: 20px; font-weight: 800; text-transform: uppercase; }
+.room-input:focus { outline: none; border-color: var(--accent); }
+.room-input.compact { width: 104px; padding: 7px 9px; font-size: 14px; }
 .big { font-size: 18px; padding: 16px 26px; }
 .lobby-right { background: var(--panel); border: 2px solid var(--grid); padding: 20px; overflow: auto; }
 .st-list { display: flex; flex-direction: column; gap: 10px; }

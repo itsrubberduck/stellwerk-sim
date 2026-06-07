@@ -97,7 +97,7 @@ export class GameEngine {
   links = new Map<string, LinkState>()
   phase: Phase = 'LOBBY'
   elapsed = 0
-  roomCode = Math.random().toString(36).slice(2, 6).toUpperCase()
+  roomCode: string
   soloMode = false
 
   trains: Train[] = []
@@ -116,7 +116,10 @@ export class GameEngine {
   players = new Map<string, Player>()
   private toasts: { kind: 'good' | 'bad' | 'info', text: string }[] = []
 
-  constructor() { this.buildNet(2, defaultTypes(2)) }
+  constructor(roomCode = Math.random().toString(36).slice(2, 6).toUpperCase()) {
+    this.roomCode = roomCode
+    this.buildNet(2, defaultTypes(2))
+  }
 
   private buildNet(count: number, types: StationKind[]) {
     this.netCount = count

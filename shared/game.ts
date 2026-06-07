@@ -116,8 +116,8 @@ export interface GameSnapshot {
 
 // ---- Client -> Server ----
 export type ClientMessage =
-  | { t: 'helloScreen' }
-  | { t: 'helloPlayer', avatarId?: AvatarId, playerId?: string }
+  | { t: 'helloScreen', roomCode?: string }
+  | { t: 'helloPlayer', roomCode?: string, avatarId?: AvatarId, playerId?: string }
   | { t: 'claimStation', station: string }
   | { t: 'releaseStation', station: string }
   | { t: 'setEntry', trainId: string, platform: number }

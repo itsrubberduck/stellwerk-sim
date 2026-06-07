@@ -12,6 +12,7 @@ let toastSeq = 0
 const queue: ClientMessage[] = []
 let role: 'screen' | 'player' = 'screen'
 let helloAvatar: AvatarId | undefined
+let activeRoomCode: string | undefined
 let started = false
 
 function wsUrl() {
@@ -31,8 +32,8 @@ export function sendMsg(msg: ClientMessage) {
 }
 
 function hello() {
-  if (role === 'screen') sendMsg({ t: 'helloScreen' })
-  else sendMsg({ t: 'helloPlayer', avatarId: helloAvatar, playerId: playerId.value ?? undefined })
+  if (role === 'screen') sendMsg({ t: 'helloScreen', roomCode: activeRoomCode })
+  else sendMsg({ t: 'helloPlayer', roomCode: activeRoomCode, avatarId: helloAvatar, playerId: playerId.value ?? undefined })
 }
 
 function connect() {
@@ -50,7 +51,16 @@ function connect() {
   socket.onmessage = (ev) => {
     let msg: ServerMessage
     try { msg = JSON.parse(ev.data) } catch { return }
-    if (msg.t === 'snapshot') snapshot.value = msg.state
+    if (msg.t === 'snapshot') {
+      snapshot.value = msg.state
+      activeRoomCode = msg.state.roomCode
+      try { localStorage.setItem(role === 'screen' ? 'swk_screen_room' : 'swk_room', activeRoomCode) } catch {}
+      const url = new URL(location.href)
+      if (url.searchParams.get('room') !== activeRoomCode) {
+        url.searchParams.set('room', activeRoomCode)
+        history.replaceState({}, '', url)
+      }
+    }
     else if (msg.t === 'welcome') {
       playerId.value = msg.playerId
       try { localStorage.setItem('swk_playerId', msg.playerId) } catch {}
@@ -66,11 +76,15 @@ export function useGame(asRole: 'screen' | 'player', name = '') {
   if (!started) {
     started = true
     role = asRole
+    const queryRoom = new URLSearchParams(location.search).get('room')?.trim().toUpperCase()
     if (asRole === 'player') {
       try {
         playerId.value = localStorage.getItem('swk_playerId')
         helloAvatar = (localStorage.getItem('swk_avatar') as AvatarId | null) ?? undefined
+        activeRoomCode = queryRoom || localStorage.getItem('swk_room') || undefined
       } catch {}
+    } else {
+      try { activeRoomCode = queryRoom || localStorage.getItem('swk_screen_room') || undefined } catch {}
     }
     connect()
   }
@@ -80,5 +94,13 @@ export function useGame(asRole: 'screen' | 'player', name = '') {
 export function setPlayerAvatar(avatarId: AvatarId) {
   helloAvatar = avatarId
   try { localStorage.setItem('swk_avatar', avatarId) } catch {}
-  sendMsg({ t: 'helloPlayer', avatarId, playerId: playerId.value ?? undefined })
+  sendMsg({ t: 'helloPlayer', roomCode: activeRoomCode, avatarId, playerId: playerId.value ?? undefined })
+}
+
+export function setGameRoom(roomCode: string) {
+  const normalized = roomCode.trim().toUpperCase().replace(/[^A-Z0-9]/g, '').slice(0, 10)
+  if (!normalized) return
+  activeRoomCode = normalized
+  snapshot.value = null
+  hello()
 }

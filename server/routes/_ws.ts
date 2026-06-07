@@ -1,18 +1,15 @@
 // WebSocket endpoint. The screen and all phones connect here.
 
-import { room } from '../utils/room'
+import { roomHub } from '../utils/room'
 
 export default defineWebSocketHandler({
-  open(peer) {
-    room.add(peer)
-  },
   message(peer, message) {
-    room.handle(peer, message.text())
+    roomHub.handle(peer, message.text())
   },
   close(peer) {
-    room.remove(peer)
+    roomHub.remove(peer)
   },
   error(peer) {
-    room.remove(peer)
+    roomHub.remove(peer)
   }
 })

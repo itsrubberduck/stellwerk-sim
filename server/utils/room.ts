@@ -1,4 +1,4 @@
-// Single-room manager: owns the engine, the tick loop and connected peers.
+// Room instances own one isolated simulation and their connected peers.
 
 import { GameEngine } from './engine'
 import type { ClientMessage, ServerMessage } from '../../shared/game'
@@ -13,15 +13,25 @@ interface Peerish {
 }
 
 class Room {
-  engine = new GameEngine()
+  engine: GameEngine
   peers = new Map<Peerish, PeerMeta>()
   private last = Date.now()
   private timer: ReturnType<typeof setInterval> | null = null
+
+  constructor(code: string) {
+    this.engine = new GameEngine(code)
+  }
 
   ensureLoop() {
     if (this.timer) return
     this.last = Date.now()
     this.timer = setInterval(() => this.loop(), 100)
+  }
+
+  stopLoop() {
+    if (!this.timer) return
+    clearInterval(this.timer)
+    this.timer = null
   }
 
   private loop() {
@@ -53,6 +63,7 @@ class Room {
       if (!stillHere) this.engine.setPlayerConnected(meta.playerId, false)
     }
     this.peers.delete(peer)
+    if (this.peers.size === 0) this.stopLoop()
   }
 
   private sendSnapshot(peer: Peerish) {
@@ -131,4 +142,48 @@ class Room {
   }
 }
 
-export const room = new Room()
+const normalizeRoomCode = (value?: string) => value?.trim().toUpperCase().replace(/[^A-Z0-9]/g, '').slice(0, 10) || ''
+const randomRoomCode = () => Math.random().toString(36).slice(2, 6).toUpperCase()
+
+class RoomHub {
+  rooms = new Map<string, Room>()
+  peerRooms = new Map<Peerish, Room>()
+
+  remove(peer: Peerish) {
+    const room = this.peerRooms.get(peer)
+    if (room) room.remove(peer)
+    this.peerRooms.delete(peer)
+  }
+
+  handle(peer: Peerish, raw: string) {
+    let msg: ClientMessage
+    try { msg = JSON.parse(raw) } catch { return }
+
+    if (msg.t === 'helloScreen' || msg.t === 'helloPlayer') {
+      const requested = normalizeRoomCode(msg.roomCode)
+      let code = requested
+      if (!code) {
+        do code = randomRoomCode()
+        while (this.rooms.has(code))
+      }
+
+      const current = this.peerRooms.get(peer)
+      let room = this.rooms.get(code)
+      if (!room) {
+        room = new Room(code)
+        this.rooms.set(code, room)
+      }
+      if (current !== room) {
+        if (current) current.remove(peer)
+        room.add(peer)
+        this.peerRooms.set(peer, room)
+      }
+      room.handle(peer, raw)
+      return
+    }
+
+    this.peerRooms.get(peer)?.handle(peer, raw)
+  }
+}
+
+export const roomHub = new RoomHub()
