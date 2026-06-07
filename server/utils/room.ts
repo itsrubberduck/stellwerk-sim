@@ -81,23 +81,21 @@ class Room {
         this.send(peer, { t: 'welcome', playerId: id })
         break
       }
-      case 'claimSector':
-        if (meta.playerId) e.claimSector(meta.playerId, msg.sector)
+      case 'claimStation':
+        if (meta.playerId) e.claimStation(meta.playerId, msg.station)
         break
-      case 'releaseSector':
-        if (meta.playerId) e.releaseSector(meta.playerId, msg.sector)
+      case 'releaseStation':
+        if (meta.playerId) e.releaseStation(meta.playerId, msg.station)
         break
       case 'setEntry':
         e.setEntry(msg.trainId, msg.platform)
         break
       case 'setExit':
-        e.setExit(msg.trainId)
+        e.setExit(msg.trainId, msg.exitLine)
         break
       case 'cancelResv':
         e.cancelResv(msg.trainId)
         break
-      case 'ackDisturbance':
-        break // client-side dismiss only
       case 'start':
         e.start()
         break
@@ -107,8 +105,8 @@ class Room {
       case 'setSolo':
         e.setSolo(msg.solo)
         break
-      case 'setPreset':
-        e.setPreset(msg.preset)
+      case 'setNetwork':
+        e.setNetwork(msg.count)
         break
     }
     this.sendSnapshot(peer)

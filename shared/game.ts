@@ -1,17 +1,7 @@
-// Shared types & constants for ICE-Stellwerk-Chaos.
-// Pure data — safe to import on both server and client.
-
-import type { Preset, Side } from './layout'
-export type { Preset, Side } from './layout'
+// Shared types & messages for the ICE-Stellwerk corridor (multi-station network).
 
 export type TrainKind = 'SPRINTER' | 'ICE' | 'IC' | 'FREIGHT'
-
-export interface TrainKindMeta {
-  label: string
-  weight: number
-  color: string
-}
-
+export interface TrainKindMeta { label: string, weight: number, color: string }
 export const TRAIN_KINDS: Record<TrainKind, TrainKindMeta> = {
   SPRINTER: { label: 'ICE-Sprinter', weight: 3, color: '#ff3b3b' },
   ICE: { label: 'ICE', weight: 2, color: '#ffd23b' },
@@ -20,102 +10,84 @@ export const TRAIN_KINDS: Record<TrainKind, TrainKindMeta> = {
 }
 
 export type TrainState =
-  | 'APPROACH' // waiting at entry signal on its arrival track
-  | 'ENTERING' // traversing entry throat
-  | 'DWELL' // at platform
-  | 'READY_DEPART' // dwell done, waiting for exit route
-  | 'EXITING' // traversing exit throat
-  | 'DEPARTED'
-  | 'STUCK' // forced brake
+  | 'APPROACH' | 'ENTERING' | 'DWELL' | 'READY_DEPART' | 'EXITING' | 'DEPARTED' | 'STUCK'
 
 export type Phase = 'LOBBY' | 'RUHE' | 'BERUFSVERKEHR' | 'STOERUNGSBETRIEB' | 'GAMEOVER'
-
 export const PHASE_LABEL: Record<Phase, string> = {
-  LOBBY: 'Lobby',
-  RUHE: 'Ruhiger Betrieb',
-  BERUFSVERKEHR: 'Berufsverkehr',
-  STOERUNGSBETRIEB: 'Störungsbetrieb',
-  GAMEOVER: 'Betrieb eingestellt'
-}
-
-export type DisturbanceKind = 'HEAD_FAULT' | 'PLATFORM_BLOCK' | 'PERSON_ON_TRACK'
-
-export interface DisturbanceView {
-  id: string
-  kind: DisturbanceKind
-  side?: Side
-  platform?: number
-  phase: 'WARN' | 'ACTIVE'
-  secLeft: number
+  LOBBY: 'Lobby', RUHE: 'Ruhiger Betrieb', BERUFSVERKEHR: 'Berufsverkehr',
+  STOERUNGSBETRIEB: 'Störungsbetrieb', GAMEOVER: 'Betrieb eingestellt'
 }
 
 export interface TrainView {
   id: string
   number: string
   kind: TrainKind
-  entryLine: string
-  exitLine: string
+  dir: 'E' | 'W' // travel direction through the corridor
+  station: string | null // current station id; null = left the network
+  arrLine: string // line id it arrived on in the current station
+  exitLine: string | null // chosen exit line in the current station
   platform: number | null
-  sollPlatform: number
+  sollPlatform: number // soll for current station
+  sollExitLine: string // soll exit line for current station
   deviated: boolean
   state: TrainState
   delaySec: number
-  progress: number // 0..1 within current throat traversal
+  progress: number
   dwellLeft: number
   connectionId: string | null
   connectionMet: boolean
   routeId: string | null
   resvKind: 'entry' | 'exit' | null
   resvPlatform: number | null
+  resvExitLine: string | null
 }
 
-export interface PlayerView {
+export interface StationView {
   id: string
-  name: string
-  sectors: string[] // line ids
-  connected: boolean
-}
-
-export interface GameSnapshot {
-  preset: Preset
-  phase: Phase
-  elapsed: number
-  platforms: (string | null)[] // train id occupying platform index
+  platforms: (string | null)[]
   platformDisabled: boolean[]
   sideDisabled: { W: boolean, E: boolean }
+}
+export interface LinkView { id: string, a: string, b: string, occupant: (string | null)[] }
+export interface PlayerView { id: string, name: string, station: string | null, connected: boolean }
+
+export interface GameSnapshot {
+  netCount: number
+  phase: Phase
+  elapsed: number
+  stations: StationView[]
+  links: LinkView[]
   trains: TrainView[]
-  disturbances: DisturbanceView[]
-  globalStop: boolean
-  incoming: { number: string, kind: TrainKind, entryLine: string, exitLine: string, sollPlatform: number, inSec: number }[]
+  incoming: { number: string, kind: TrainKind, dir: 'E' | 'W', firstStation: string, inSec: number }[]
   backlog: number
   maxBacklog: number
   score: number
   punctual: number
   departed: number
+  deviations: number
+  handoffs: number
   forcedBrakes: number
-  connectionsMade: number
   punctualityPct: number
   players: PlayerView[]
   roomCode: string
   soloMode: boolean
 }
 
-// ---- Client -> Server messages ----
+// ---- Client -> Server ----
 export type ClientMessage =
   | { t: 'helloScreen' }
   | { t: 'helloPlayer', name?: string, playerId?: string }
-  | { t: 'claimSector', sector: string }
-  | { t: 'releaseSector', sector: string }
+  | { t: 'claimStation', station: string }
+  | { t: 'releaseStation', station: string }
   | { t: 'setEntry', trainId: string, platform: number }
-  | { t: 'setExit', trainId: string }
+  | { t: 'setExit', trainId: string, exitLine: string }
   | { t: 'cancelResv', trainId: string }
-  | { t: 'ackDisturbance', id: string }
   | { t: 'start' }
   | { t: 'restart' }
   | { t: 'setSolo', solo: boolean }
-  | { t: 'setPreset', preset: Preset }
+  | { t: 'setNetwork', count: number }
 
-// ---- Server -> Client messages ----
+// ---- Server -> Client ----
 export type ServerMessage =
   | { t: 'snapshot', state: GameSnapshot }
   | { t: 'welcome', playerId: string }

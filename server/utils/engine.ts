@@ -1,57 +1,41 @@
-// Authoritative game simulation for ICE-Stellwerk-Chaos.
-//
-// Disponier-Modell:
-//  - Jeder Zug hat ein Soll-Gleis (planm. Bahnsteig) + Restriktionen.
-//  - Fahrstraßen werden VORGEMERKT (reserviert) und feuern automatisch, sobald
-//    der Weg frei ist — in der Reihenfolge, in der sie angemeldet wurden
-//    (= spielergesteuerte Priorität).
-//  - Konflikte über Kopf-Diagonalen-Kreuzung (layout.ts); zweigleisige Strecken.
+// Authoritative simulation for the ICE-Stellwerk corridor (multi-station).
+// Each Station reuses the single-station mechanics (reservation/auto-fire,
+// weichengenaue conflicts, restrictions). Trains travel a planned Soll-Route
+// through the chain; departing onto a LINK hands the train to the neighbour
+// (the hand-over track is a shared block — the neighbour must clear it).
 
-import {
-  TRAIN_KINDS,
-  type DisturbanceKind,
-  type GameSnapshot,
-  type Phase,
-  type TrainKind,
-  type TrainState
-} from '../../shared/game'
-import {
-  PRESETS,
-  generateLayout,
-  kindAllowed,
-  routesConflict,
-  type Layout,
-  type LineDef,
-  type Preset,
-  type RouteDef,
-  type Side
-} from '../../shared/layout'
+import { TRAIN_KINDS, type GameSnapshot, type Phase, type TrainKind, type TrainState } from '../../shared/game'
+import { kindAllowed, routesConflict, type Layout, type RouteDef, type Side } from '../../shared/layout'
+import { generateNetwork, type LinkDef, type NetworkDef, type StationDef } from '../../shared/network'
 
-// ---- tuning (real seconds) — "mehr Kopf, weniger Reflex" ----
-const ENTER_TIME = 4.5
-const EXIT_TIME = 4.0
-const DWELL_TIME = 10
-const PUNCTUAL_THRESHOLD = 35
-const STUCK_CLEAR_TIME = 12
-const PREVIEW_LEN = 7
-const DEVIATION_PENALTY = 60
+const ENTER_TIME = 4.0
+const EXIT_TIME = 3.6
+const DWELL_TIME = 9
+const PUNCTUAL_THRESHOLD = 50
+const PREVIEW_LEN = 6
+const DEVIATION_PENALTY = 50
+const HANDOFF_BONUS = 25
 
-interface PhaseCfg { until: number, spawn: number, disturbEvery: number }
+interface PhaseCfg { until: number, spawn: number }
 const PHASES: { name: Phase, cfg: PhaseCfg }[] = [
-  { name: 'RUHE', cfg: { until: 60, spawn: 14, disturbEvery: Infinity } },
-  { name: 'BERUFSVERKEHR', cfg: { until: 185, spawn: 10, disturbEvery: 40 } },
-  { name: 'STOERUNGSBETRIEB', cfg: { until: Infinity, spawn: 7, disturbEvery: 22 } }
+  { name: 'RUHE', cfg: { until: 60, spawn: 13 } },
+  { name: 'BERUFSVERKEHR', cfg: { until: 185, spawn: 9 } },
+  { name: 'STOERUNGSBETRIEB', cfg: { until: Infinity, spawn: 6.5 } }
 ]
 
-interface Resv { kind: 'entry' | 'exit', platform?: number, order: number }
+interface Resv { kind: 'entry' | 'exit', platform?: number, exitLine?: string, order: number }
+interface SollLeg { platform: number, exitLine: string }
 interface Train {
   id: string
   number: string
   kind: TrainKind
-  entryLine: string
-  exitLine: string
+  dir: 'E' | 'W'
+  station: string | null
+  arrLine: string
+  arrLink: { linkId: string, track: number } | null
+  exitLine: string | null
   platform: number | null
-  sollPlatform: number
+  soll: Record<string, SollLeg>
   deviated: boolean
   state: TrainState | 'PENDING'
   delaySec: number
@@ -63,229 +47,132 @@ interface Train {
   routeId: string | null
   resv: Resv | null
 }
+interface Spec { number: string, kind: TrainKind, dir: 'E' | 'W' }
+interface Player { id: string, name: string, station: string | null, connected: boolean }
 
-interface Spec { number: string, kind: TrainKind, entryLine: string, exitLine: string, sollPlatform: number }
-interface Disturbance { id: string, kind: DisturbanceKind, side?: Side, platform?: number, phase: 'WARN' | 'ACTIVE', secLeft: number }
-interface Player { id: string, name: string, sectors: string[], connected: boolean }
+class Station {
+  platforms: (string | null)[]
+  platformDisabled: boolean[]
+  sideDisabled: Record<Side, boolean> = { W: false, E: false }
+  constructor(public def: StationDef) {
+    this.platforms = Array(def.layout.platforms.length).fill(null)
+    this.platformDisabled = Array(def.layout.platforms.length).fill(false)
+  }
+  get layout(): Layout { return this.def.layout }
+}
+interface LinkState { def: LinkDef, occupant: (string | null)[] }
 
 let seq = 0
 const uid = (p: string) => `${p}${(++seq).toString(36)}`
-function rnd<T>(arr: T[]): T { return arr[Math.floor(Math.random() * arr.length)]! }
-function jitter(base: number, frac = 0.2) { return base * (1 + (Math.random() * 2 - 1) * frac) }
+function rnd<T>(a: T[]): T { return a[Math.floor(Math.random() * a.length)]! }
+function jitter(b: number, f = 0.2) { return b * (1 + (Math.random() * 2 - 1) * f) }
+const lineNum = (id: string) => parseInt(id.slice(1), 10)
+const sideOf = (id: string): Side => id[0] === 'W' ? 'W' : 'E'
+const flipLine = (id: string) => (sideOf(id) === 'W' ? 'E' : 'W') + lineNum(id)
 
 export class GameEngine {
-  preset: Preset = 'KNOTEN'
-  layout: Layout = generateLayout('KNOTEN')
+  netCount = 2
+  net!: NetworkDef
+  stations = new Map<string, Station>()
+  links = new Map<string, LinkState>()
   phase: Phase = 'LOBBY'
   elapsed = 0
   roomCode = Math.random().toString(36).slice(2, 6).toUpperCase()
   soloMode = false
 
-  platforms: (string | null)[] = []
-  platformDisabled: boolean[] = []
-  sideDisabled: Record<Side, boolean> = { W: false, E: false }
-
   trains: Train[] = []
   pending: Train[] = []
   preview: Spec[] = []
-  disturbances: Disturbance[] = []
-
   nextSpawnIn = 0
-  nextDisturbIn = 0
-  globalStopLeft = 0
   resvSeq = 0
 
   score = 0
   punctual = 0
   departed = 0
+  deviations = 0
+  handoffs = 0
   forcedBrakes = 0
-  connectionsMade = 0
 
   players = new Map<string, Player>()
   private toasts: { kind: 'good' | 'bad' | 'info', text: string }[] = []
 
-  constructor() { this.applyLayout() }
-  private applyLayout() {
-    this.platforms = Array(this.layout.platforms.length).fill(null)
-    this.platformDisabled = Array(this.layout.platforms.length).fill(false)
+  constructor() { this.buildNet(2) }
+
+  private buildNet(count: number) {
+    this.netCount = count
+    this.net = generateNetwork(count)
+    this.stations = new Map(this.net.stations.map(s => [s.id, new Station(s)]))
+    this.links = new Map(this.net.links.map(l => [l.id, { def: l, occupant: Array(l.tracks).fill(null) }]))
   }
-  get maxBacklog() { return Math.max(6, this.layout.lines.length * 2) }
+  get maxBacklog() { return 10 }
 
   // ---------- lifecycle ----------
-  setPreset(p: Preset) {
-    if (!PRESETS[p]) return
-    const wasPlaying = this.playing()
-    this.preset = p
-    this.layout = generateLayout(p)
-    this.applyLayout()
-    const valid = new Set(this.layout.lines.map(l => l.id))
-    for (const pl of this.players.values()) pl.sectors = pl.sectors.filter(s => valid.has(s))
-    if (wasPlaying) {
-      // live switch: clear the board, keep score / clock / phase
-      this.trains = []; this.pending = []; this.preview = []; this.disturbances = []
-      this.sideDisabled = { W: false, E: false }; this.globalStopLeft = 0; this.resvSeq = 0
-      this.refillPreview(); this.nextSpawnIn = 3
-      this.pushToast('info', `Stellwerk gewechselt: ${this.layout.name}`)
-    } else {
-      this.phase = 'LOBBY'
-    }
-  }
-  start() {
+  setNetwork(count: number) {
     if (this.phase !== 'LOBBY' && this.phase !== 'GAMEOVER') return
-    this.reset(false)
-    this.phase = 'RUHE'
-    this.nextSpawnIn = 4
-    this.refillPreview()
+    const c = Math.max(1, Math.min(6, Math.floor(count)))
+    this.buildNet(c)
+    const valid = new Set(this.net.stations.map(s => s.id))
+    for (const p of this.players.values()) if (p.station && !valid.has(p.station)) p.station = null
+    this.phase = 'LOBBY'
   }
+  start() { if (this.phase !== 'LOBBY' && this.phase !== 'GAMEOVER') return; this.reset(false); this.phase = 'RUHE'; this.nextSpawnIn = 4; this.refillPreview() }
   restart() { this.reset(true) }
   private reset(toLobby: boolean) {
     this.elapsed = 0
-    this.applyLayout()
-    this.sideDisabled = { W: false, E: false }
-    this.trains = []; this.pending = []; this.preview = []; this.disturbances = []
-    this.nextSpawnIn = 0; this.nextDisturbIn = 0; this.globalStopLeft = 0; this.resvSeq = 0
-    this.score = 0; this.punctual = 0; this.departed = 0; this.forcedBrakes = 0; this.connectionsMade = 0
+    for (const s of this.stations.values()) { s.platforms.fill(null); s.platformDisabled.fill(false); s.sideDisabled = { W: false, E: false } }
+    for (const l of this.links.values()) l.occupant.fill(null)
+    this.trains = []; this.pending = []; this.preview = []; this.nextSpawnIn = 0; this.resvSeq = 0
+    this.score = 0; this.punctual = 0; this.departed = 0; this.deviations = 0; this.handoffs = 0; this.forcedBrakes = 0
     if (toLobby) this.phase = 'LOBBY'
   }
 
   // ---------- players ----------
   addPlayer(id: string, name: string): Player {
     let p = this.players.get(id)
-    if (!p) { p = { id, name: name || `FdL ${this.players.size + 1}`, sectors: [], connected: true }; this.players.set(id, p) }
+    if (!p) { p = { id, name: name || `Fdl ${this.players.size + 1}`, station: null, connected: true }; this.players.set(id, p) }
     else { p.connected = true; if (name) p.name = name }
     return p
   }
   setPlayerConnected(id: string, c: boolean) { const p = this.players.get(id); if (p) p.connected = c }
-  claimSector(playerId: string, sector: string) {
-    if (!this.layout.lines.some(l => l.id === sector)) return
-    for (const p of this.players.values()) p.sectors = p.sectors.filter(s => s !== sector)
-    const p = this.players.get(playerId); if (p && !p.sectors.includes(sector)) p.sectors.push(sector)
+  claimStation(pid: string, sid: string) {
+    if (!this.stations.has(sid)) return
+    for (const p of this.players.values()) if (p.station === sid) p.station = null
+    const p = this.players.get(pid); if (p) p.station = sid
   }
-  releaseSector(playerId: string, sector: string) { const p = this.players.get(playerId); if (p) p.sectors = p.sectors.filter(s => s !== sector) }
+  releaseStation(pid: string, sid: string) { const p = this.players.get(pid); if (p && p.station === sid) p.station = null }
   setSolo(v: boolean) { this.soloMode = v }
 
-  // ---------- conflict helpers ----------
+  // ---------- helpers ----------
   private playing() { return this.phase === 'RUHE' || this.phase === 'BERUFSVERKEHR' || this.phase === 'STOERUNGSBETRIEB' }
-  private routeOf(t: Train): RouteDef | undefined { return t.routeId ? this.layout.byId(t.routeId) : undefined }
-  private throatBusy(candidate: RouteDef): boolean {
+  private st(id: string | null): Station | undefined { return id ? this.stations.get(id) : undefined }
+  private routeOf(t: Train): RouteDef | undefined { const s = this.st(t.station); return t.routeId && s ? s.layout.byId(t.routeId) : undefined }
+  private throatBusy(station: Station, cand: RouteDef): boolean {
     for (const t of this.trains) {
+      if (t.station !== station.def.id) continue
       if (t.state !== 'ENTERING' && t.state !== 'EXITING' && t.state !== 'STUCK') continue
-      const r = this.routeOf(t)
-      if (r && routesConflict(candidate, r)) return true
+      const r = this.routeOf(t); if (r && routesConflict(cand, r)) return true
     }
     return false
   }
-  private depTrackBusy(lineId: string): boolean {
-    return this.trains.some(t => (t.state === 'EXITING' || t.state === 'STUCK') && t.exitLine === lineId && this.routeOf(t)?.kind === 'exit')
+  private depLineBusy(station: Station, lineId: string): boolean {
+    return this.trains.some(t => t.station === station.def.id && t.state === 'EXITING' && t.exitLine === lineId)
   }
-  private lineHasApproach(lineId: string): boolean { return this.trains.some(t => t.state === 'APPROACH' && t.entryLine === lineId) }
-  private platformCls(platform: number) { return this.layout.platforms[platform - 1]?.cls ?? 'LANG' }
+  private lineHasApproach(stationId: string, lineId: string): boolean {
+    return this.trains.some(t => t.station === stationId && t.state === 'APPROACH' && t.arrLine === lineId)
+  }
+  private forwardSide(dir: 'E' | 'W'): Side { return dir === 'E' ? 'E' : 'W' }
+  private entrySide(dir: 'E' | 'W'): Side { return dir === 'E' ? 'W' : 'E' }
+  private sideRole(station: Station, side: Side) { return side === 'W' ? station.def.west : station.def.east }
+  // order of stations along travel direction
+  private order(dir: 'E' | 'W'): StationDef[] { return dir === 'E' ? this.net.stations : [...this.net.stations].reverse() }
 
-  // ---------- commands (reservations) ----------
-  setEntry(trainId: string, platform: number): boolean {
-    const t = this.trains.find(x => x.id === trainId)
-    if (!t || t.state !== 'APPROACH') return false
-    if (platform < 1 || platform > this.platforms.length) return false
-    if (!kindAllowed(t.kind, this.platformCls(platform))) return false
-    if (!this.layout.entry(t.entryLine, platform)) return false // not reachable from entry line
-    if (!this.layout.exit(t.exitLine, platform)) return false // could not leave toward destination
-    t.resv = { kind: 'entry', platform, order: ++this.resvSeq }
-    return true
-  }
-  setExit(trainId: string): boolean {
-    const t = this.trains.find(x => x.id === trainId)
-    if (!t || (t.state !== 'DWELL' && t.state !== 'READY_DEPART')) return false
-    t.resv = { kind: 'exit', order: ++this.resvSeq }
-    return true
-  }
-  cancelResv(trainId: string): boolean {
-    const t = this.trains.find(x => x.id === trainId)
-    if (!t) return false
-    t.resv = null
-    return true
-  }
-
-  private commitReservations() {
-    if (this.globalStopLeft > 0) return
-    const cands = this.trains.filter(t => t.resv &&
-      ((t.resv.kind === 'entry' && t.state === 'APPROACH') || (t.resv.kind === 'exit' && t.state === 'READY_DEPART')))
-    cands.sort((a, b) => a.resv!.order - b.resv!.order)
-    for (const t of cands) {
-      if (t.resv!.kind === 'entry') this.tryCommitEntry(t)
-      else this.tryCommitExit(t)
-    }
-  }
-  private tryCommitEntry(t: Train) {
-    const platform = t.resv!.platform!
-    const idx = platform - 1
-    if (this.platforms[idx] || this.platformDisabled[idx]) return
-    const route = this.layout.entry(t.entryLine, platform)
-    if (!route || this.sideDisabled[route.side] || this.throatBusy(route)) return
-    this.platforms[idx] = t.id
-    t.platform = platform
-    t.deviated = platform !== t.sollPlatform
-    t.routeId = route.id
-    t.state = 'ENTERING'
-    t.progress = 0
-    t.resv = null
-  }
-  private tryCommitExit(t: Train) {
-    if (t.platform == null) return
-    const route = this.layout.exit(t.exitLine, t.platform)
-    if (!route || this.sideDisabled[route.side] || this.depTrackBusy(t.exitLine) || this.throatBusy(route)) return
-    t.routeId = route.id
-    t.state = 'EXITING'
-    t.progress = 0
-    t.resv = null
-  }
-
-  // ---------- tick ----------
-  tick(dt: number) {
-    if (!this.playing()) return
-    this.elapsed += dt
-    this.phase = PHASES.find(p => this.elapsed < p.cfg.until)!.name
-    if (this.globalStopLeft > 0) this.globalStopLeft -= dt
-    const cfg = PHASES.find(p => this.elapsed < p.cfg.until)!.cfg
-
-    this.tickSpawns(dt, cfg)
-    this.tickDisturbances(dt, cfg)
-    this.commitReservations()
-    this.tickTrains(dt)
-    this.drainPending()
-
-    if (this.pending.length > this.maxBacklog) { this.phase = 'GAMEOVER'; this.pushToast('bad', 'Knoten überlastet — Betrieb eingestellt!') }
-  }
-
-  private tickSpawns(dt: number, cfg: PhaseCfg) {
-    this.nextSpawnIn -= dt
-    if (this.nextSpawnIn <= 0) {
-      this.refillPreview()
-      this.spawnFromSpec(this.preview.shift()!)
-      this.refillPreview()
-      this.nextSpawnIn = jitter(cfg.spawn)
-    }
-  }
+  // ---------- spawning + soll route ----------
   private refillPreview() { while (this.preview.length < PREVIEW_LEN) this.preview.push(this.genSpec()) }
-
   private genSpec(): Spec {
     const r = Math.random()
     const kind: TrainKind = r < 0.16 ? 'SPRINTER' : r < 0.58 ? 'ICE' : r < 0.82 ? 'IC' : 'FREIGHT'
-    for (let attempt = 0; attempt < 50; attempt++) {
-      const entry = rnd(this.layout.lines)
-      const ps = this.layout.platforms.filter(p => this.layout.entry(entry.id, p.index) && kindAllowed(kind, p.cls))
-      if (!ps.length) continue
-      const soll = rnd(ps)
-      const exits = this.layout.lines.filter(l => l.id !== entry.id && this.layout.exit(l.id, soll.index))
-      if (!exits.length) continue
-      const opp = exits.filter(l => l.side !== entry.side)
-      const exit = (opp.length && Math.random() < 0.72) ? rnd(opp) : rnd(exits)
-      return { number: this.genNumber(kind), kind, entryLine: entry.id, exitLine: exit.id, sollPlatform: soll.index }
-    }
-    // fallback (always routable)
-    const entry = this.layout.lines[0]!
-    const p = this.layout.platforms.find(pf => this.layout.entry(entry.id, pf.index)) ?? this.layout.platforms[0]!
-    const exitL = this.layout.lines.find(l => l.id !== entry.id && this.layout.exit(l.id, p.index)) ?? entry
-    return { number: this.genNumber(kind), kind, entryLine: entry.id, exitLine: exitL.id, sollPlatform: p.index }
+    const dir: 'E' | 'W' = Math.random() < 0.5 ? 'E' : 'W'
+    return { number: this.genNumber(kind), kind, dir }
   }
   private genNumber(kind: TrainKind): string {
     if (kind === 'SPRINTER') return `ICE ${1000 + Math.floor(Math.random() * 99)}`
@@ -293,14 +180,57 @@ export class GameEngine {
     if (kind === 'IC') return `IC ${2000 + Math.floor(Math.random() * 900)}`
     return `GZ ${40000 + Math.floor(Math.random() * 9000)}`
   }
-  private spawnFromSpec(spec: Spec) {
-    const t: Train = {
-      id: uid('t'), number: spec.number, kind: spec.kind, entryLine: spec.entryLine, exitLine: spec.exitLine,
-      platform: null, sollPlatform: spec.sollPlatform, deviated: false, state: 'PENDING',
-      delaySec: 0, progress: 0, dwellLeft: 0, connectionId: null, connectionMet: false, stuckLeft: 0, routeId: null, resv: null
+
+  private buildSoll(kind: TrainKind, dir: 'E' | 'W'): { soll: Record<string, SollLeg>, firstLine: string } | null {
+    const order = this.order(dir)
+    const eSide = this.entrySide(dir), fSide = this.forwardSide(dir)
+    const first = order[0]!
+    const entryLines = first.layout.lines.filter(l => l.side === eSide)
+    for (let attempt = 0; attempt < 30; attempt++) {
+      const soll: Record<string, SollLeg> = {}
+      let arrLine = rnd(entryLines).id
+      let ok = true
+      for (let i = 0; i < order.length; i++) {
+        const sdef = order[i]!
+        const last = i === order.length - 1
+        const cand = sdef.layout.platforms.filter(p =>
+          kindAllowed(kind, p.cls) && sdef.layout.entry(arrLine, p.index) &&
+          sdef.layout.lines.some(l => l.side === fSide && sdef.layout.exit(l.id, p.index)))
+        if (!cand.length) { ok = false; break }
+        const pf = rnd(cand)
+        const exits = sdef.layout.lines.filter(l => l.side === fSide && sdef.layout.exit(l.id, pf.index))
+        if (!exits.length) { ok = false; break }
+        const exitLine = rnd(exits).id
+        soll[sdef.id] = { platform: pf.index, exitLine }
+        if (!last) arrLine = flipLine(exitLine)
+      }
+      if (ok) return { soll, firstLine: (Object.keys(soll).length ? this.firstArr(order, soll, dir) : arrLine) }
     }
-    if (this.phase !== 'RUHE' && Math.random() < 0.2) {
-      const partner = this.trains.find(o => !o.connectionId && (o.state === 'APPROACH' || o.state === 'DWELL' || o.state === 'ENTERING'))
+    return null
+  }
+  private firstArr(order: StationDef[], soll: Record<string, SollLeg>, dir: 'E' | 'W'): string {
+    // recompute the very first arrival line (entry portal) consistent with soll
+    const first = order[0]!
+    const eSide = this.entrySide(dir)
+    // any entry line that reaches the chosen first platform
+    const pf = soll[first.id]!.platform
+    const cand = first.layout.lines.filter(l => l.side === eSide && first.layout.entry(l.id, pf))
+    return (cand[0] ?? first.layout.lines.find(l => l.side === eSide)!).id
+  }
+
+  private spawnFromSpec(spec: Spec) {
+    const built = this.buildSoll(spec.kind, spec.dir)
+    if (!built) return
+    const order = this.order(spec.dir)
+    const firstStation = order[0]!.id
+    const t: Train = {
+      id: uid('t'), number: spec.number, kind: spec.kind, dir: spec.dir,
+      station: firstStation, arrLine: built.firstLine, arrLink: null, exitLine: null, platform: null,
+      soll: built.soll, deviated: false, state: 'PENDING', delaySec: 0, progress: 0, dwellLeft: 0,
+      connectionId: null, connectionMet: false, stuckLeft: 0, routeId: null, resv: null
+    }
+    if (this.phase !== 'RUHE' && Math.random() < 0.18) {
+      const partner = this.trains.find(o => !o.connectionId && (o.state === 'APPROACH' || o.state === 'DWELL'))
       if (partner) { partner.connectionId = t.id; t.connectionId = partner.id }
     }
     this.pending.push(t)
@@ -309,113 +239,110 @@ export class GameEngine {
   private drainPending() {
     for (let i = 0; i < this.pending.length;) {
       const t = this.pending[i]!
-      if (!this.lineHasApproach(t.entryLine)) { t.state = 'APPROACH'; this.pending.splice(i, 1); this.trains.push(t) }
+      if (t.station && !this.lineHasApproach(t.station, t.arrLine)) { t.state = 'APPROACH'; this.pending.splice(i, 1); this.trains.push(t) }
       else i++
     }
   }
 
+  // ---------- commands ----------
+  setEntry(trainId: string, platform: number): boolean {
+    const t = this.trains.find(x => x.id === trainId); const s = this.st(t?.station ?? null)
+    if (!t || !s || t.state !== 'APPROACH') return false
+    if (platform < 1 || platform > s.platforms.length) return false
+    if (!kindAllowed(t.kind, s.layout.platforms[platform - 1]!.cls)) return false
+    if (!s.layout.entry(t.arrLine, platform)) return false
+    const fSide = this.forwardSide(t.dir)
+    if (!s.layout.lines.some(l => l.side === fSide && s.layout.exit(l.id, platform))) return false // dead platform
+    t.resv = { kind: 'entry', platform, order: ++this.resvSeq }
+    return true
+  }
+  setExit(trainId: string, exitLine: string): boolean {
+    const t = this.trains.find(x => x.id === trainId); const s = this.st(t?.station ?? null)
+    if (!t || !s || (t.state !== 'DWELL' && t.state !== 'READY_DEPART') || t.platform == null) return false
+    if (sideOf(exitLine) !== this.forwardSide(t.dir)) return false
+    if (!s.layout.exit(exitLine, t.platform)) return false
+    t.resv = { kind: 'exit', exitLine, order: ++this.resvSeq }
+    return true
+  }
+  cancelResv(trainId: string): boolean { const t = this.trains.find(x => x.id === trainId); if (!t) return false; t.resv = null; return true }
+
+  private commitReservations() {
+    const cands = this.trains.filter(t => t.resv &&
+      ((t.resv.kind === 'entry' && t.state === 'APPROACH') || (t.resv.kind === 'exit' && t.state === 'READY_DEPART')))
+    cands.sort((a, b) => a.resv!.order - b.resv!.order)
+    for (const t of cands) t.resv!.kind === 'entry' ? this.tryEntry(t) : this.tryExit(t)
+  }
+  private tryEntry(t: Train) {
+    const s = this.st(t.station)!; const platform = t.resv!.platform!; const idx = platform - 1
+    if (s.platforms[idx] || s.platformDisabled[idx]) return
+    const route = s.layout.entry(t.arrLine, platform); if (!route || this.throatBusy(s, route)) return
+    s.platforms[idx] = t.id; t.platform = platform
+    if (platform !== t.soll[s.def.id]!.platform) { t.deviated = true }
+    if (t.arrLink) { const lk = this.links.get(t.arrLink.linkId); if (lk) lk.occupant[t.arrLink.track - 1] = null; t.arrLink = null }
+    t.routeId = route.id; t.state = 'ENTERING'; t.progress = 0; t.resv = null
+    if (!t.exitLine) t.exitLine = t.soll[s.def.id]!.exitLine
+  }
+  private tryExit(t: Train) {
+    if (t.platform == null) return
+    const s = this.st(t.station)!; const exitLine = t.resv!.exitLine!
+    const route = s.layout.exit(exitLine, t.platform); if (!route) return
+    if (this.depLineBusy(s, exitLine) || this.throatBusy(s, route)) return
+    const side = sideOf(exitLine); const role = this.sideRole(s, side)
+    if (role.kind === 'LINK') { const lk = this.links.get(role.linkId!)!; if (lk.occupant[lineNum(exitLine) - 1]) return }
+    t.exitLine = exitLine
+    if (exitLine !== t.soll[s.def.id]!.exitLine) t.deviated = true
+    t.routeId = route.id; t.state = 'EXITING'; t.progress = 0; t.resv = null
+  }
+
+  // ---------- tick ----------
+  tick(dt: number) {
+    if (!this.playing()) return
+    this.elapsed += dt
+    this.phase = PHASES.find(p => this.elapsed < p.cfg.until)!.name
+    const cfg = PHASES.find(p => this.elapsed < p.cfg.until)!.cfg
+    this.nextSpawnIn -= dt
+    if (this.nextSpawnIn <= 0) { this.refillPreview(); this.spawnFromSpec(this.preview.shift()!); this.refillPreview(); this.nextSpawnIn = jitter(cfg.spawn) }
+    this.commitReservations()
+    this.tickTrains(dt)
+    this.drainPending()
+    if (this.pending.length > this.maxBacklog) { this.phase = 'GAMEOVER'; this.pushToast('bad', 'Netz überlastet — Betrieb eingestellt!') }
+  }
   private tickTrains(dt: number) {
-    const frozen = this.globalStopLeft > 0
     for (const t of this.trains) {
       switch (t.state) {
-        case 'APPROACH':
-        case 'READY_DEPART':
-          t.delaySec += dt; break
+        case 'APPROACH': case 'READY_DEPART': t.delaySec += dt; break
         case 'ENTERING':
-          if (frozen) break
           t.progress += dt / ENTER_TIME
           if (t.progress >= 1) { t.progress = 1; t.state = 'DWELL'; t.dwellLeft = DWELL_TIME; t.routeId = null }
           break
-        case 'DWELL':
-          t.dwellLeft -= dt
-          if (t.dwellLeft <= 0) { t.dwellLeft = 0; t.state = 'READY_DEPART' }
-          break
-        case 'EXITING':
-          if (frozen) break
-          t.progress += dt / EXIT_TIME
-          if (t.progress >= 1) this.finishDeparture(t)
-          break
-        case 'STUCK':
-          t.delaySec += dt; t.stuckLeft -= dt
-          if (t.stuckLeft <= 0) this.resolveStuck(t)
-          break
+        case 'DWELL': t.dwellLeft -= dt; if (t.dwellLeft <= 0) { t.dwellLeft = 0; t.state = 'READY_DEPART' } break
+        case 'EXITING': t.progress += dt / EXIT_TIME; if (t.progress >= 1) this.finishLeg(t); break
+        case 'STUCK': t.delaySec += dt; t.stuckLeft -= dt; if (t.stuckLeft <= 0) t.state = 'DWELL'; break
       }
-      if (t.connectionId) {
-        const o = this.trains.find(x => x.id === t.connectionId)
-        if (o && t.state === 'DWELL' && o.state === 'DWELL') { t.connectionMet = true; o.connectionMet = true }
-      }
+      if (t.connectionId) { const o = this.trains.find(x => x.id === t.connectionId); if (o && t.state === 'DWELL' && o.state === 'DWELL') { t.connectionMet = true; o.connectionMet = true } }
     }
     this.trains = this.trains.filter(t => t.state !== 'DEPARTED')
   }
-  private finishDeparture(t: Train) {
-    if (t.platform) this.platforms[t.platform - 1] = null
-    t.routeId = null; t.state = 'DEPARTED'
-    this.scoreDeparture(t)
+  private finishLeg(t: Train) {
+    const s = this.st(t.station)!; const exitLine = t.exitLine!
+    if (t.platform) s.platforms[t.platform - 1] = null
+    const side = sideOf(exitLine); const role = this.sideRole(s, side)
+    if (role.kind === 'PORTAL') { t.routeId = null; t.platform = null; t.state = 'DEPARTED'; this.scoreFinal(t); return }
+    // hand over to neighbour
+    const lk = this.links.get(role.linkId!)!; const track = lineNum(exitLine)
+    lk.occupant[track - 1] = t.id; this.handoffs++; this.score += HANDOFF_BONUS
+    t.station = role.neighbor!; t.arrLine = flipLine(exitLine); t.arrLink = { linkId: role.linkId!, track }
+    t.state = 'APPROACH'; t.platform = null; t.routeId = null; t.exitLine = null; t.progress = 0
   }
-  private resolveStuck(t: Train) {
-    const r = this.routeOf(t)
-    if (r?.kind === 'entry') { t.state = 'DWELL'; t.dwellLeft = DWELL_TIME; t.progress = 1; t.routeId = null }
-    else this.finishDeparture(t)
-  }
-  private scoreDeparture(t: Train) {
+  private scoreFinal(t: Train) {
     const w = TRAIN_KINDS[t.kind].weight
     const onTime = t.delaySec <= PUNCTUAL_THRESHOLD
     this.departed++; if (onTime) this.punctual++
-    let pts = Math.round(w * 100 - t.delaySec * 2 * w)
-    if (t.deviated) pts -= DEVIATION_PENALTY
-    if (t.connectionId) { if (t.connectionMet) { pts += 150; this.connectionsMade++ } else pts -= 120 }
+    let pts = Math.round(w * 100 - t.delaySec * 1.5 * w)
+    if (t.deviated) { pts -= DEVIATION_PENALTY; this.deviations++ }
+    if (t.connectionId) { if (t.connectionMet) pts += 150; else pts -= 120 }
     this.score += pts
-    const tag = t.deviated ? ' (Soll-Gleis verfehlt)' : ''
-    if (onTime && !t.deviated) this.pushToast('good', `${t.number} planmäßig raus (+${pts})`)
-    else this.pushToast('info', `${t.number} raus${tag} (${pts >= 0 ? '+' : ''}${pts})`)
-  }
-
-  // ---------- disturbances ----------
-  private tickDisturbances(dt: number, cfg: PhaseCfg) {
-    if (cfg.disturbEvery !== Infinity) {
-      this.nextDisturbIn -= dt
-      if (this.nextDisturbIn <= 0) { this.spawnDisturbance(); this.nextDisturbIn = jitter(cfg.disturbEvery) }
-    }
-    for (let i = 0; i < this.disturbances.length;) {
-      const d = this.disturbances[i]!
-      d.secLeft -= dt
-      if (d.phase === 'WARN' && d.secLeft <= 0) { d.phase = 'ACTIVE'; d.secLeft = jitter(12, 0.3); this.activateDisturbance(d) }
-      else if (d.phase === 'ACTIVE' && d.secLeft <= 0) { this.clearDisturbance(d); this.disturbances.splice(i, 1); continue }
-      i++
-    }
-  }
-  private spawnDisturbance() {
-    const kinds: DisturbanceKind[] = ['HEAD_FAULT', 'PLATFORM_BLOCK', 'PERSON_ON_TRACK']
-    const kind = kinds[Math.floor(Math.random() * (this.phase === 'STOERUNGSBETRIEB' ? 3 : 2))]!
-    const d: Disturbance = { id: uid('d'), kind, phase: 'WARN', secLeft: 6 }
-    if (kind === 'HEAD_FAULT') d.side = Math.random() < 0.5 ? 'W' : 'E'
-    if (kind === 'PLATFORM_BLOCK') {
-      const free = this.platformDisabled.map((x, i) => x ? -1 : i).filter(i => i >= 0)
-      if (!free.length) return
-      d.platform = rnd(free) + 1
-    }
-    this.disturbances.push(d)
-    const where = kind === 'HEAD_FAULT' ? `Bf-Kopf ${d.side === 'W' ? 'West' : 'Ost'}` : kind === 'PLATFORM_BLOCK' ? `Gleis ${d.platform}` : 'Strecke'
-    const label = kind === 'HEAD_FAULT' ? 'Weichenstörung' : kind === 'PLATFORM_BLOCK' ? 'Gleissperrung' : 'Person im Gleis'
-    this.pushToast('bad', `⚠ ${label} angekündigt: ${where}`)
-  }
-  private activateDisturbance(d: Disturbance) {
-    if (d.kind === 'HEAD_FAULT' && d.side) {
-      this.sideDisabled[d.side] = true
-      for (const t of this.trains) {
-        const r = this.routeOf(t)
-        if ((t.state === 'ENTERING' || t.state === 'EXITING') && r?.side === d.side) {
-          t.state = 'STUCK'; t.stuckLeft = STUCK_CLEAR_TIME
-          this.forcedBrakes++; this.score -= Math.round(200 * TRAIN_KINDS[t.kind].weight)
-          this.pushToast('bad', `🛑 Zwangsbremsung: ${t.number}!`)
-        }
-      }
-    } else if (d.kind === 'PLATFORM_BLOCK' && d.platform) this.platformDisabled[d.platform - 1] = true
-    else if (d.kind === 'PERSON_ON_TRACK') { this.globalStopLeft = d.secLeft; this.pushToast('bad', '🛑 Person im Gleis — Vollhalt!') }
-  }
-  private clearDisturbance(d: Disturbance) {
-    if (d.kind === 'HEAD_FAULT' && d.side) this.sideDisabled[d.side] = false
-    else if (d.kind === 'PLATFORM_BLOCK' && d.platform) this.platformDisabled[d.platform - 1] = false
+    this.pushToast(onTime && !t.deviated ? 'good' : 'info', `${t.number} aus dem Netz (${pts >= 0 ? '+' : ''}${pts})`)
   }
 
   // ---------- output ----------
@@ -425,29 +352,28 @@ export class GameEngine {
   snapshot(): GameSnapshot {
     const interval = PHASES.find(p => this.elapsed < p.cfg.until)!.cfg.spawn
     return {
-      preset: this.preset,
+      netCount: this.netCount,
       phase: this.phase,
       elapsed: Math.floor(this.elapsed),
-      platforms: [...this.platforms],
-      platformDisabled: [...this.platformDisabled],
-      sideDisabled: { W: this.sideDisabled.W, E: this.sideDisabled.E },
-      trains: this.trains.map(t => ({
-        id: t.id, number: t.number, kind: t.kind, entryLine: t.entryLine, exitLine: t.exitLine,
-        platform: t.platform, sollPlatform: t.sollPlatform, deviated: t.deviated, state: t.state as TrainState,
-        delaySec: Math.floor(t.delaySec), progress: t.progress, dwellLeft: Math.max(0, Math.ceil(t.dwellLeft)),
-        connectionId: t.connectionId, connectionMet: t.connectionMet, routeId: t.routeId,
-        resvKind: t.resv?.kind ?? null, resvPlatform: t.resv?.kind === 'entry' ? (t.resv.platform ?? null) : null
-      })),
-      disturbances: this.disturbances.map(d => ({ id: d.id, kind: d.kind, side: d.side, platform: d.platform, phase: d.phase, secLeft: Math.max(0, Math.ceil(d.secLeft)) })),
-      globalStop: this.globalStopLeft > 0,
-      incoming: this.preview.map((s, i) => ({ number: s.number, kind: s.kind, entryLine: s.entryLine, exitLine: s.exitLine, sollPlatform: s.sollPlatform, inSec: Math.max(0, Math.ceil(this.nextSpawnIn + i * interval)) })),
-      backlog: this.pending.length,
-      maxBacklog: this.maxBacklog,
-      score: this.score, punctual: this.punctual, departed: this.departed, forcedBrakes: this.forcedBrakes, connectionsMade: this.connectionsMade,
+      stations: this.net.stations.map(sd => { const s = this.stations.get(sd.id)!; return { id: sd.id, platforms: [...s.platforms], platformDisabled: [...s.platformDisabled], sideDisabled: { W: s.sideDisabled.W, E: s.sideDisabled.E } } }),
+      links: this.net.links.map(l => ({ id: l.id, a: l.a, b: l.b, occupant: [...this.links.get(l.id)!.occupant] })),
+      trains: this.trains.map(t => {
+        const soll = t.station ? t.soll[t.station] : undefined
+        return {
+          id: t.id, number: t.number, kind: t.kind, dir: t.dir, station: t.station, arrLine: t.arrLine,
+          exitLine: t.exitLine, platform: t.platform, sollPlatform: soll?.platform ?? 0, sollExitLine: soll?.exitLine ?? '',
+          deviated: t.deviated, state: t.state as TrainState, delaySec: Math.floor(t.delaySec), progress: t.progress,
+          dwellLeft: Math.max(0, Math.ceil(t.dwellLeft)), connectionId: t.connectionId, connectionMet: t.connectionMet,
+          routeId: t.routeId, resvKind: t.resv?.kind ?? null, resvPlatform: t.resv?.kind === 'entry' ? (t.resv.platform ?? null) : null,
+          resvExitLine: t.resv?.kind === 'exit' ? (t.resv.exitLine ?? null) : null
+        }
+      }),
+      incoming: this.preview.map((s, i) => ({ number: s.number, kind: s.kind, dir: s.dir, firstStation: this.order(s.dir)[0]!.id, inSec: Math.max(0, Math.ceil(this.nextSpawnIn + i * interval)) })),
+      backlog: this.pending.length, maxBacklog: this.maxBacklog,
+      score: this.score, punctual: this.punctual, departed: this.departed, deviations: this.deviations, handoffs: this.handoffs, forcedBrakes: this.forcedBrakes,
       punctualityPct: this.departed > 0 ? Math.round((this.punctual / this.departed) * 100) : 100,
-      players: [...this.players.values()].map(p => ({ id: p.id, name: p.name, sectors: p.sectors, connected: p.connected })),
-      roomCode: this.roomCode,
-      soloMode: this.soloMode
+      players: [...this.players.values()].map(p => ({ id: p.id, name: p.name, station: p.station, connected: p.connected })),
+      roomCode: this.roomCode, soloMode: this.soloMode
     }
   }
 }

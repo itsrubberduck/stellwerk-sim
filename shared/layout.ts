@@ -148,7 +148,7 @@ export function generateLayout(preset: Preset): Layout {
       const n = l.side === 'W' ? cfg.w : cfg.e
       return Math.abs(norm(n, l.index) - norm(cfg.p, p.index - 1)) <= cfg.window
     }
-    return finish(preset, cfg, ['W', 'E'], lines, platforms, reach)
+    return finish(preset, cfg.name, cfg.type, ['W', 'E'], lines, platforms, reach)
   }
 
   if (cfg.type === 'TERMINUS') {
@@ -156,7 +156,7 @@ export function generateLayout(preset: Preset): Layout {
     // bay platforms: open to the west (left), buffer stop on the right
     for (let k = 0; k < cfg.p; k++) platforms.push({ index: k + 1, y: spread(cfg.p, PLAT_TOP, PLAT_BOT, k), leftX: PL, rightX: PR + 60, centerX: CENTER + 30, cls: cfg.classes[k] ?? 'LANG', openL: true, openR: false })
     const reach = (l: LineDef, p: PlatformDef) => Math.abs(norm(cfg.w, l.index) - norm(cfg.p, p.index - 1)) <= cfg.window
-    return finish(preset, cfg, ['W'], lines, platforms, reach)
+    return finish(preset, cfg.name, cfg.type, ['W'], lines, platforms, reach)
   }
 
   // JUNCTION (Abzweig): west lines normal; east lines fan into two branches.
@@ -172,15 +172,27 @@ export function generateLayout(preset: Preset): Layout {
     // east: Ast Nord serves upper platforms, Ast Süd lower (overlap in the middle)
     return l.id === 'E1' ? pp <= 0.58 : pp >= 0.42
   }
-  return finish(preset, cfg, ['W', 'E'], lines, platforms, reach)
+  return finish(preset, cfg.name, cfg.type, ['W', 'E'], lines, platforms, reach)
 }
 
-function finish(preset: Preset, cfg: StationCfg, sides: Side[], lines: LineDef[], platforms: PlatformDef[], reach: (l: LineDef, p: PlatformDef) => boolean): Layout {
+function finish(preset: Preset, name: string, type: StationType, sides: Side[], lines: LineDef[], platforms: PlatformDef[], reach: (l: LineDef, p: PlatformDef) => boolean): Layout {
   const { routes, eMap, xMap, idMap } = buildRoutes(lines, platforms, reach)
   return {
-    preset, name: cfg.name, type: cfg.type, sides, vw: VW, vh: VH, lines, platforms, routes,
+    preset, name, type, sides, vw: VW, vh: VH, lines, platforms, routes,
     entry: (l, p) => eMap.get(`${l}:${p}`),
     exit: (l, p) => xMap.get(`${l}:${p}`),
     byId: (id) => idMap.get(id)
   }
+}
+
+// Build a through-station layout with explicit side line counts — used by the
+// network/corridor (e.g. 2 portal tracks on one side, 4 link tracks on the other).
+export function buildThrough(name: string, w: number, e: number, p: number, window: number, classes: PlatformClass[]): Layout {
+  const lines: LineDef[] = []
+  for (let i = 0; i < w; i++) { const y = spread(w, LINE_TOP, LINE_BOT, i); lines.push(mkLine(`W${i + 1}`, 'W', `West ${i + 1}`, i, y, y)) }
+  for (let j = 0; j < e; j++) { const y = spread(e, LINE_TOP, LINE_BOT, j); lines.push(mkLine(`E${j + 1}`, 'E', `Ost ${j + 1}`, j, y, y)) }
+  const platforms: PlatformDef[] = []
+  for (let k = 0; k < p; k++) platforms.push({ index: k + 1, y: spread(p, PLAT_TOP, PLAT_BOT, k), leftX: PL, rightX: PR, centerX: CENTER, cls: classes[k] ?? 'LANG', openL: true, openR: true })
+  const reach = (l: LineDef, pf: PlatformDef) => { const n = l.side === 'W' ? w : e; return Math.abs(norm(n, l.index) - norm(p, pf.index - 1)) <= window }
+  return finish('KNOTEN', name, 'THROUGH', ['W', 'E'], lines, platforms, reach)
 }
